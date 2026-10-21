@@ -20,7 +20,7 @@ function headers(): Record<string, string> {
 
 /**
  * The Square location payments are filed under: SQUARE_LOCATION_ID if set,
- * otherwise the active location named SQUARE_LOCATION_NAME (default "Gwynn oak"),
+ * otherwise the first active location named SQUARE_LOCATION_NAME, "Everstone Rentals" or "Gwynn oak",
  * otherwise the active location at 2121 Gwynn Oak Ave.
  */
 async function resolveLocationId(): Promise<string | null> {
@@ -32,9 +32,12 @@ async function resolveLocationId(): Promise<string | null> {
     locations?: { id: string; name?: string; status?: string; address?: { address_line_1?: string } }[];
   };
   const active = (body.locations ?? []).filter((l) => l.status !== "INACTIVE");
-  const wanted = (secret("SQUARE_LOCATION_NAME") ?? "Gwynn oak").trim().toLowerCase();
+  const names = [secret("SQUARE_LOCATION_NAME"), "Everstone Rentals", "Gwynn oak"]
+    .filter((n): n is string => Boolean(n))
+    .map((n) => n.trim().toLowerCase());
+  const byName = (n: string) => active.find((l) => (l.name ?? "").trim().toLowerCase() === n);
   const match =
-    active.find((l) => (l.name ?? "").trim().toLowerCase() === wanted) ??
+    names.map(byName).find(Boolean) ??
     active.find((l) => (l.address?.address_line_1 ?? "").toLowerCase().includes("2121 gwynn oak"));
   return match?.id ?? null;
 }
