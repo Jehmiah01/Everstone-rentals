@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "everstone-rentals",
+  "main": "dist/server/server.js",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "assets": { "directory": "./dist/client", "binding": "ASSETS", "not_found_handling": "none" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "everstone-rentals", "database_id": "PASTE_D1_DATABASE_ID", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [{ "binding": "FILES", "id": "PASTE_KV_NAMESPACE_ID" }]
+}
