@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "workers_dev": true,
+  "routes": [
+    { "pattern": "everstonerentals.com", "custom_domain": true },
+    { "pattern": "www.everstonerentals.com", "custom_domain": true }
+  ],
   "assets": { "directory": "./dist/client", "binding": "ASSETS", "not_found_handling": "none" },
   "d1_databases": [
     { "binding": "DB", "database_name": "everstone-rentals", "database_id": "f547c2a2-6e91-461d-8723-0661b3c483a5", "migrations_dir": "migrations" }
