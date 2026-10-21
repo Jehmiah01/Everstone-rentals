@@ -1,4 +1,4 @@
-import { secret, mailFrom } from "./config.server";
+import { businessEmail, secret, mailFrom } from "./config.server";
 import { logEmail } from "./db.server";
 
 export type Attachment = { filename: string; content: Uint8Array };
@@ -35,6 +35,7 @@ export async function sendEmail(opts: {
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: mailFrom(),
+        reply_to: businessEmail(),
         to: recipients,
         subject: opts.subject,
         html: opts.html,
