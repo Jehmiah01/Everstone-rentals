@@ -29,6 +29,7 @@ export type Booking = {
   mileage_in: string | null; fuel_in: string | null; damage_cents: number | null; fees_cents: number | null;
   deposit_refunded_cents: number | null; deposit_deducted_cents: number | null; final_paid_cents: number | null;
   actual_return_at: string | null; notes: string | null; created_at: string;
+  refunded_cents: number | null; refund_id: string | null; refunded_at: string | null;
 };
 
 export type Agreement = {

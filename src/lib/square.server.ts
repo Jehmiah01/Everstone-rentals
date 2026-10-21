@@ -95,3 +95,33 @@ export async function verifyWebhookSignature(rawBody: string, url: string, signa
   const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
   return expected === signature;
 }
+
+/** Full or partial refund of a reservation's Square payment. One refund per idempotency key. */
+export async function refundPayment(args: {
+  paymentId: string | null;
+  orderId: string | null;
+  amountCents: number;
+  reason: string;
+  idempotencyKey: string;
+}): Promise<{ id: string; status: string }> {
+  let paymentId = args.paymentId;
+  if (!paymentId && args.orderId) {
+    const res = await fetch(`${base()}/v2/orders/${encodeURIComponent(args.orderId)}`, { headers: headers() });
+    const body = (await res.json().catch(() => ({}))) as { order?: { tenders?: { payment_id?: string }[] } };
+    paymentId = body.order?.tenders?.[0]?.payment_id ?? null;
+  }
+  if (!paymentId) throw new Error("No Square payment was found for this reservation. Refund it in your Square app instead.");
+  const res = await fetch(`${base()}/v2/refunds`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      idempotency_key: args.idempotencyKey.slice(0, 45),
+      payment_id: paymentId,
+      amount_money: { amount: args.amountCents, currency: "USD" },
+      reason: args.reason.slice(0, 190),
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { refund?: { id: string; status: string }; errors?: { detail?: string }[] };
+  if (!res.ok || !body.refund) throw new Error(body.errors?.[0]?.detail ?? `Square responded ${res.status}`);
+  return body.refund;
+}

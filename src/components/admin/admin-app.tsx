@@ -69,6 +69,7 @@ function idBadge(b: AdminBooking) {
 
 function payBadge(b: AdminBooking) {
   if (b.paymentStatus === "paid") return <Badge tone="ok">Paid</Badge>;
+  if (b.paymentStatus === "refunded") return <Badge tone="info">Refunded</Badge>;
   if (b.paymentStatus === "link_sent") return <Badge tone="warn">Payment link sent</Badge>;
   return <Badge tone="plain">Unpaid</Badge>;
 }
@@ -301,6 +302,7 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
   const [idNotes, setIdNotes] = useState("");
   const [payLink, setPayLink] = useState(b.paymentLink ?? "");
   const [copied, setCopied] = useState(false);
+  const [confirmRefund, setConfirmRefund] = useState(false);
   const [rec, setRec] = useState({
     mileageOut: b.mileageOut ?? "", fuelOut: b.fuelOut ?? "", conditionNotes: b.conditionNotes ?? "",
     mileageIn: b.mileageIn ?? "", fuelIn: b.fuelIn ?? "", actualReturnAt: b.actualReturnAt ?? "",
@@ -402,7 +404,29 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
       <section>
         <h3 className="font-semibold">Payment</h3>
         <p className="mt-3 text-sm">{payBadge(b)} {b.paidAt ? <span className="text-subtle">on {formatEt(b.paidAt)}</span> : null}</p>
-        {b.paymentStatus !== "paid" ? (
+        {b.paymentStatus === "paid" ? (
+          <div className="mt-3 space-y-2">
+            <SmallButton
+              tone={confirmRefund ? "danger" : "ghost"}
+              disabled={busy}
+              onClick={async () => {
+                if (!confirmRefund) {
+                  setConfirmRefund(true);
+                  return;
+                }
+                setConfirmRefund(false);
+                await run({ action: "refund", id: b.id }, "Refund sent through Square. It reaches the customer's card in a few business days.");
+              }}
+            >
+              {confirmRefund ? `Tap again to refund ${fmtMoney(b.totalCents + b.depositCents)}` : "Refund full amount"}
+            </SmallButton>
+            <p className="text-sm text-subtle">Goes back to the customer's card through Square.</p>
+          </div>
+        ) : null}
+        {b.paymentStatus === "refunded" ? (
+          <p className="mt-3 text-sm text-subtle">Refunded {fmtMoney(b.refundedCents ?? 0)}{b.refundedAt ? ` on ${formatEt(b.refundedAt)}` : ""}.</p>
+        ) : null}
+        {b.paymentStatus !== "paid" && b.paymentStatus !== "refunded" ? (
           <div className="mt-3 space-y-3">
             <Field id={`paylink-${b.id}`} label="Square payment link" hint="Create one in Square and paste it here to email it to the renter.">
               <input id={`paylink-${b.id}`} value={payLink} onChange={(e) => setPayLink(e.target.value)} placeholder="https://square.link/..." className={inputClass} />

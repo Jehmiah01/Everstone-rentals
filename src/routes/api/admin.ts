@@ -9,7 +9,7 @@ import { loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendAppro
 import { isValidDay, parseRateTable } from "@/lib/dates";
 import { db, getBookingBundle, newId, storage, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
-import { squareConfigured } from "@/lib/square.server";
+import { refundPayment, squareConfigured } from "@/lib/square.server";
 import type { AdminBooking, AdminData, AdminVehicle } from "@/lib/types";
 
 const json = (body: unknown, status = 200, headers?: Record<string, string>) => Response.json(body, { status, headers });
@@ -66,7 +66,7 @@ async function loadAdminData(origin: string): Promise<AdminData> {
       mileageOut: r.mileage_out, fuelOut: r.fuel_out, conditionNotes: r.condition_notes, mileageIn: r.mileage_in, fuelIn: r.fuel_in,
       actualReturnAt: r.actual_return_at, damageCents: r.damage_cents, feesCents: r.fees_cents,
       depositRefundedCents: r.deposit_refunded_cents, depositDeductedCents: r.deposit_deducted_cents,
-      finalPaidCents: r.final_paid_cents, notes: r.notes,
+      finalPaidCents: r.final_paid_cents, notes: r.notes, refundedCents: r.refunded_cents, refundedAt: r.refunded_at,
       vehicleId: r.vehicle_id, vehicleName: `${r.v_year} ${r.v_make} ${r.v_model}`,
       customer: {
         name: r.c_name, email: r.c_email, phone: r.c_phone, address: `${r.c_address}, ${r.c_city}, ${r.c_state} ${r.c_zip}`,
@@ -129,6 +129,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve"), id: idField, repName: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("setStatus"), id: idField, status: z.enum(["requested", "declined", "cancelled", "completed"]), reason: z.string().trim().max(500).optional() }),
   z.object({ action: z.literal("markPaid"), id: idField }),
+  z.object({ action: z.literal("refund"), id: idField, reason: z.string().trim().max(190).optional() }),
   z.object({ action: z.literal("setPaymentLink"), id: idField, url: z.string().url().max(500) }),
   z.object({ action: z.literal("resendAgreements"), id: idField }),
   z.object({ action: z.literal("reviewVerification"), id: idField, decision: z.enum(["approve", "reject"]), notes: z.string().trim().max(500).optional() }),
@@ -246,6 +247,25 @@ export const Route = createFileRoute("/api/admin")({
               await db().prepare("UPDATE bookings SET payment_status = 'paid', paid_at = COALESCE(paid_at, ?1) WHERE id = ?2").bind(now, a.id).run();
               await refreshPdfs(a.id);
               return json({ ok: true });
+            }
+            case "refund": {
+              const b = await getBookingBundle(a.id);
+              if (!b) return fail("Reservation not found", 404);
+              if (b.booking.payment_status !== "paid") return fail("Only paid reservations can be refunded");
+              if (!squareConfigured()) return fail("Square is not connected here, so refund it in your Square app instead");
+              const amount = b.booking.total_cents + b.booking.deposit_cents;
+              const refund = await refundPayment({
+                paymentId: b.booking.square_payment_id,
+                orderId: b.booking.square_order_id,
+                amountCents: amount,
+                reason: a.reason || `Refund for reservation ${a.id}`,
+                idempotencyKey: `refund-${a.id}`,
+              });
+              await db()
+                .prepare("UPDATE bookings SET payment_status = 'refunded', refunded_cents = ?1, refund_id = ?2, refunded_at = ?3 WHERE id = ?4")
+                .bind(amount, refund.id, now, a.id)
+                .run();
+              return json({ ok: true, refundStatus: refund.status });
             }
             case "setPaymentLink": {
               const b = await getBookingBundle(a.id);
