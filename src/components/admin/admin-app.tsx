@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { fmtMoney, fmtTime12, formatEt, prettyDay, shortDay } from "@/lib/dates";
-import type { AdminBooking, AdminData, AdminVehicle } from "@/lib/types";
+import type { AdminBooking, AdminData, AdminDriver, AdminVehicle } from "@/lib/types";
 
 import { Checkbox, ContinueButton, Field, inputClass } from "../booking/form";
 import { LogoMark } from "../site/chrome";
@@ -65,6 +65,82 @@ function idBadge(b: AdminBooking) {
   };
   const [label, tone] = map[b.verificationStatus] ?? [b.verificationStatus, "plain"];
   return <Badge tone={tone}>{label}</Badge>;
+}
+
+const driverCleared = (d: AdminDriver) => d.verificationStatus === "approved" || d.verificationStatus === "not_required";
+
+function driversBadge(b: AdminBooking) {
+  if (b.drivers.length === 0) return null;
+  if (b.drivers.every(driverCleared)) return <Badge tone="ok">{b.drivers.length === 1 ? "Driver OK" : "Drivers OK"}</Badge>;
+  const toReview = b.drivers.filter((d) => d.verificationStatus === "submitted").length;
+  if (toReview > 0) return <Badge tone="warn">{toReview === 1 ? "Driver ID to review" : `${toReview} driver IDs to review`}</Badge>;
+  return <Badge tone="plain">Driver ID missing</Badge>;
+}
+
+function DriverReview({ d, run, busy }: { d: AdminDriver; run: Run; busy: boolean }) {
+  const [notes, setNotes] = useState("");
+  const [copied, setCopied] = useState(false);
+  const status: Record<string, [string, "ok" | "warn" | "danger" | "info" | "plain"]> = {
+    pending: ["ID not uploaded", "plain"], submitted: ["ID to review", "warn"], approved: ["ID approved", "ok"],
+    rejected: ["ID rejected", "danger"], not_required: ["ID on file", "ok"],
+  };
+  const [label, tone] = status[d.verificationStatus] ?? [d.verificationStatus, "plain"];
+  const when = (s: string) => formatEt(s.includes("T") ? s : `${s.replace(" ", "T")}Z`);
+  return (
+    <li className="border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium">{d.fullName}</span>
+        <Badge tone={tone}>{label}</Badge>
+      </div>
+      <dl className="mt-3 grid grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+        <Row k="Phone"><a className="underline underline-offset-4" href={`tel:${d.phone}`}>{d.phone}</a></Row>
+        <Row k="Date of birth">{prettyDay(d.dob)}</Row>
+        <Row k="License">{d.dlNumber} ({d.dlState}), expires {prettyDay(d.dlExpiration)}</Row>
+      </dl>
+      {d.licenseUrl || d.selfieUrl ? (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {d.licenseUrl ? (
+              <a href={d.licenseUrl} target="_blank" rel="noreferrer"><img src={d.licenseUrl} alt={`${d.fullName}'s license`} className="aspect-[3/2] w-full border border-line object-cover" /></a>
+            ) : null}
+            {d.selfieUrl ? (
+              <a href={d.selfieUrl} target="_blank" rel="noreferrer"><img src={d.selfieUrl} alt={`${d.fullName} holding their license`} className="aspect-[3/2] w-full border border-line object-cover" /></a>
+            ) : null}
+          </div>
+          {d.submittedAt ? <p className="mt-2 text-sm text-subtle">Uploaded {when(d.submittedAt)}. Check the name, photo, date of birth and expiration match the details above.</p> : null}
+        </>
+      ) : d.verificationStatus === "not_required" ? (
+        <p className="mt-3 text-sm text-subtle">This license was approved on an earlier reservation.</p>
+      ) : (
+        <p className="mt-3 text-sm text-subtle">No photos yet. They can't drive until you approve their ID.</p>
+      )}
+      {d.verificationStatus === "submitted" ? (
+        <div className="mt-3 space-y-3">
+          <Field id={`drvnotes-${d.id}`} label="Note to renter if rejecting (optional)">
+            <input id={`drvnotes-${d.id}`} value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <SmallButton tone="cobalt" disabled={busy} onClick={() => run({ action: "reviewDriver", driverId: d.id, decision: "approve" }, `${d.fullName}'s ID approved.`)}>Approve ID</SmallButton>
+            <SmallButton tone="danger" disabled={busy} onClick={() => run({ action: "reviewDriver", driverId: d.id, decision: "reject", notes: notes || undefined }, `${d.fullName}'s ID rejected. The renter was asked for new photos.`)}>Reject and ask again</SmallButton>
+          </div>
+        </div>
+      ) : null}
+      {!driverCleared(d) ? (
+        <div className="mt-3">
+          <SmallButton
+            tone="ghost"
+            onClick={async () => {
+              await navigator.clipboard.writeText(d.link).catch(() => undefined);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2000);
+            }}
+          >
+            {copied ? "Copied" : "Copy this driver's ID check link"}
+          </SmallButton>
+        </div>
+      ) : null}
+    </li>
+  );
 }
 
 function payBadge(b: AdminBooking) {
@@ -222,9 +298,10 @@ function Login({ configured, onDone }: { configured: boolean; onDone: () => Prom
 function Reservations({ data, run, busy }: { data: AdminData; run: Run; busy: boolean }) {
   const [filter, setFilter] = useState<"action" | "all" | "unsigned" | "approved" | "closed">("action");
   const [open, setOpen] = useState<string | null>(null);
+  const driverToReview = (b: AdminBooking) => b.drivers.some((d) => d.verificationStatus === "submitted");
   const needsAction = (b: AdminBooking) =>
-    b.status === "requested" && (Boolean(b.agreementsSignedAt) || b.verificationStatus === "submitted") ||
-    (b.status === "approved" && b.verificationStatus === "submitted");
+    b.status === "requested" && (Boolean(b.agreementsSignedAt) || b.verificationStatus === "submitted" || driverToReview(b)) ||
+    (b.status === "approved" && (b.verificationStatus === "submitted" || driverToReview(b)));
   const groups = {
     action: data.bookings.filter(needsAction),
     unsigned: data.bookings.filter((b) => !b.agreementsSignedAt && b.status === "requested"),
@@ -275,6 +352,7 @@ function Reservations({ data, run, busy }: { data: AdminData; run: Run; busy: bo
                   {b.agreementsSignedAt ? <Badge tone="ok">Signed</Badge> : <Badge tone="warn">Not signed</Badge>}
                   {payBadge(b)}
                   {idBadge(b)}
+                  {driversBadge(b)}
                 </span>
                 <span>{statusBadge(b)}</span>
               </button>
@@ -311,6 +389,7 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
   });
   const setR = (k: keyof typeof rec, v: string) => setRec((p) => ({ ...p, [k]: v }));
   const open = b.status === "requested" || b.status === "approved";
+  const driversWaiting = b.drivers.filter((d) => !driverCleared(d)).map((d) => d.fullName);
   const docName = (kind: string) => (kind === "rental" ? "Motor Vehicle Rental Agreement" : "Vehicle Rental Agreement");
 
   return (
@@ -324,7 +403,7 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
           <Row k="Address">{b.customer.address}</Row>
           <Row k="Date of birth">{prettyDay(b.customer.dob)}</Row>
           <Row k="License">{b.customer.dlNumber} ({b.customer.dlState}), expires {prettyDay(b.customer.dlExpiration)}</Row>
-          <Row k="Other drivers">{b.additionalDrivers || "None"}</Row>
+          <Row k="Other drivers">{b.drivers.length > 0 ? b.drivers.map((d) => d.fullName).join(", ") : b.additionalDrivers || "None"}</Row>
           <Row k="Pickup">{prettyDay(b.pickupDate)} at {fmtTime12(b.pickupTime)}</Row>
           <Row k="Return">{prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}</Row>
           <Row k="Price">{b.days} days: {b.breakdown}. Total {fmtMoney(b.totalCents + b.depositCents)}</Row>
@@ -439,6 +518,18 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
         ) : null}
       </section>
 
+      {b.drivers.length > 0 ? (
+        <section className="md:col-span-2">
+          <h3 className="font-semibold">Other drivers</h3>
+          <p className="mt-1 text-sm text-subtle">Each one needs an approved ID before you can approve the reservation.</p>
+          <ul className="mt-3 grid gap-3 md:grid-cols-2">
+            {b.drivers.map((d) => (
+              <DriverReview key={d.id} d={d} run={run} busy={busy} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="md:col-span-2">
         <h3 className="font-semibold">Decision</h3>
         {open ? (
@@ -449,12 +540,15 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
               </Field>
               <SmallButton
                 tone="cobalt"
-                disabled={busy || !b.agreementsSignedAt || repName.trim().length < 2}
+                disabled={busy || !b.agreementsSignedAt || repName.trim().length < 2 || driversWaiting.length > 0}
                 onClick={() => run({ action: "approve", id: b.id, repName: repName.trim() }, "Approved. The pickup address was sent to the renter.")}
               >
                 {b.status === "approved" ? "Re-send approval and address" : "Approve and send pickup address"}
               </SmallButton>
               {!b.agreementsSignedAt ? <p className="text-sm text-subtle">Available once the renter signs.</p> : null}
+              {b.agreementsSignedAt && driversWaiting.length > 0 ? (
+                <p className="text-sm text-subtle">Approve every other driver's ID first. Waiting on: {driversWaiting.join(", ")}.</p>
+              ) : null}
             </div>
             <div className="space-y-3 border border-line bg-surface p-4">
               <Field id={`reason-${b.id}`} label="Reason (sent to the renter, optional)">

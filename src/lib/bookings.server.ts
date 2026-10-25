@@ -3,7 +3,7 @@
 import { agreementPlainText, buildEasySignAgreement, buildRentalAgreement, type AgreementContext, type AgreementDoc } from "./agreements";
 import { COMPANY, PICKUP_ADDRESS, businessEmail } from "./config.server";
 import { fmtMoney, formatEt, parseRateTable, prettyDay, fmtTime12 } from "./dates";
-import { db, storage, type BookingBundle, type Vehicle } from "./db.server";
+import { DRIVER_CLEARED, db, storage, type AdditionalDriver, type BookingBundle, type Vehicle } from "./db.server";
 import { emailConfigured, emailShell, sendEmail } from "./email.server";
 import { renderAgreementPdf, type SignatureInfo } from "./pdf.server";
 import { squareConfigured } from "./square.server";
@@ -47,6 +47,9 @@ export function agreementContext(b: BookingBundle): AgreementContext {
       pickupDate: booking.pickup_date, pickupTime: booking.pickup_time, returnDate: booking.return_date, returnTime: booking.return_time,
       days: booking.days, breakdown: booking.rate_breakdown, totalCents: booking.total_cents,
       additionalDrivers: booking.additional_drivers ?? "",
+      drivers: b.drivers.map((d) => ({
+        fullName: d.full_name, phone: d.phone, dob: d.dob, dlNumber: d.dl_number, dlState: d.dl_state, dlExpiration: d.dl_expiration,
+      })),
       paymentStatus: booking.payment_status, paidAt: booking.paid_at ? prettyDay(booking.paid_at.slice(0, 10)) : null,
       paymentMethod: booking.payment_status === "paid" ? "Square" : "Square (pending)",
       mileageOut: booking.mileage_out ?? "", fuelOut: booking.fuel_out ?? "", conditionNotes: booking.condition_notes ?? "",
@@ -66,6 +69,18 @@ export function agreementDocs(b: BookingBundle): { rental: AgreementDoc; easy: A
 export function customerUrl(origin: string, b: BookingBundle): string {
   return `${origin}/booking/${encodeURIComponent(b.booking.id)}?token=${b.booking.token}`;
 }
+
+/** Site-relative link to an additional driver's own ID check page. */
+export function driverPath(driver: AdditionalDriver): string {
+  return `/driver/${encodeURIComponent(driver.id)}?token=${driver.token}`;
+}
+
+/** Names of listed drivers who have not passed the ID check yet. */
+export function driversNotCleared(b: BookingBundle): string[] {
+  return b.drivers.filter((d) => !DRIVER_CLEARED.has(d.verification_status)).map((d) => d.full_name);
+}
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export function fileUrl(b: BookingBundle, file: string): string {
   return `/api/files/${bookingKey(b.booking.id, file)}?b=${encodeURIComponent(b.booking.id)}&t=${b.booking.token}`;
@@ -116,7 +131,14 @@ function summaryHtml(b: BookingBundle): string {
     <tr><td style="padding:4px 0;color:#5B6270">Pickup</td><td style="padding:4px 0">${prettyDay(booking.pickup_date)} at ${fmtTime12(booking.pickup_time)}</td></tr>
     <tr><td style="padding:4px 0;color:#5B6270">Return</td><td style="padding:4px 0">${prettyDay(booking.return_date)} at ${fmtTime12(booking.return_time)}</td></tr>
     <tr><td style="padding:4px 0;color:#5B6270">Total</td><td style="padding:4px 0">${fmtMoney(booking.total_cents)} (${booking.rate_breakdown})</td></tr>
+    ${b.drivers.length > 0 ? `<tr><td style="padding:4px 0;color:#5B6270">Other drivers</td><td style="padding:4px 0">${b.drivers.map((d) => esc(d.full_name)).join(", ")}</td></tr>` : ""}
   </table>`;
+}
+
+function driversNoteHtml(b: BookingBundle): string {
+  const waiting = b.drivers.filter((d) => !DRIVER_CLEARED.has(d.verification_status));
+  if (waiting.length === 0) return "";
+  return `<p>Each other driver also needs a one-time ID check: a photo of their license and a selfie holding it. You can upload them from your reservation page, or send each driver their own link from there.</p>`;
 }
 
 export async function sendBookingReceived(b: BookingBundle, origin: string) {
@@ -127,7 +149,7 @@ export async function sendBookingReceived(b: BookingBundle, origin: string) {
     subject: `Reservation ${b.booking.id}: next, sign your rental agreements`,
     html: emailShell(
       `Thanks, ${b.customer.full_name.split(" ")[0] ?? ""}. Your request is in.`,
-      `${summaryHtml(b)}<p>Next step: review and sign both rental agreements on your phone or computer, then pay through Square.</p>
+      `${summaryHtml(b)}<p>Next step: review and sign both rental agreements on your phone or computer, then pay through Square.</p>${driversNoteHtml(b)}
        <p><a href="${link}" style="display:inline-block;background:#C8102E;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Open your reservation</a></p>
        <p style="font-size:13px;color:#5B6270">Keep this link; it is your private access to this reservation.</p>`,
     ),
@@ -240,6 +262,7 @@ export function customerView(b: BookingBundle): CustomerBookingView {
           selfieUrl: verification.selfie_key ? `/api/files/${verification.selfie_key}?b=${encodeURIComponent(booking.id)}&t=${booking.token}` : null,
         }
       : null,
+    drivers: b.drivers.map((d) => ({ id: d.id, fullName: d.full_name, verificationStatus: d.verification_status, link: driverPath(d) })),
     squareReady: squareConfigured(),
     emailReady: emailConfigured(),
     createdAt: booking.created_at,

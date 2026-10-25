@@ -5,9 +5,9 @@ import { z } from "zod";
 
 import { BRAND } from "@/lib/brand";
 import { adminConfigured, checkPassword, clearSessionCookie, issueSession, sessionCookie, verifySession } from "@/lib/auth.server";
-import { loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendApproval, sendSignedAgreements } from "@/lib/bookings.server";
+import { driverPath, driversNotCleared, loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendApproval, sendSignedAgreements } from "@/lib/bookings.server";
 import { isValidDay, parseRateTable } from "@/lib/dates";
-import { db, getBookingBundle, newId, storage, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
+import { db, getBookingBundle, newId, storage, type AdditionalDriver, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
 import { refundPayment, squareConfigured } from "@/lib/square.server";
 import type { AdminBooking, AdminData, AdminVehicle } from "@/lib/types";
@@ -50,9 +50,18 @@ async function loadAdminData(origin: string): Promise<AdminData> {
   const vehicles = (await db().prepare("SELECT * FROM vehicles ORDER BY created_at ASC").all<Vehicle>()).results;
   const blackouts = (await db().prepare("SELECT * FROM blackouts ORDER BY start_date ASC LIMIT 500").all<BlackoutRow>()).results;
   const emails = (await db().prepare("SELECT * FROM email_log ORDER BY created_at DESC LIMIT 60").all<EmailRow>()).results;
+  const driverRows = (
+    await db().prepare("SELECT * FROM additional_drivers ORDER BY booking_id ASC, position ASC LIMIT 3000").all<AdditionalDriver>()
+  ).results;
 
   const latestVerification = new Map<string, Verification>();
   for (const v of verifications) if (!latestVerification.has(v.booking_id)) latestVerification.set(v.booking_id, v);
+  const driversByBooking = new Map<string, AdditionalDriver[]>();
+  for (const d of driverRows) {
+    const list = driversByBooking.get(d.booking_id) ?? [];
+    list.push(d);
+    driversByBooking.set(d.booking_id, list);
+  }
   const file = (key: string | null) => (key ? `/api/files/${key}` : null);
 
   const bookings: AdminBooking[] = rows.map((r) => {
@@ -81,6 +90,11 @@ async function loadAdminData(origin: string): Promise<AdminData> {
       verification: ver
         ? { status: ver.status, licenseUrl: file(ver.license_key), selfieUrl: file(ver.selfie_key), createdAt: ver.created_at, notes: ver.notes }
         : null,
+      drivers: (driversByBooking.get(r.id) ?? []).map((d) => ({
+        id: d.id, fullName: d.full_name, phone: d.phone, dob: d.dob, dlNumber: d.dl_number, dlState: d.dl_state,
+        dlExpiration: d.dl_expiration, verificationStatus: d.verification_status, licenseUrl: file(d.license_key),
+        selfieUrl: file(d.selfie_key), submittedAt: d.submitted_at, notes: d.notes, link: `${origin}${driverPath(d)}`,
+      })),
       customerLink: `${origin}/booking/${encodeURIComponent(r.id)}?token=${r.token}`,
     };
   });
@@ -133,6 +147,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("setPaymentLink"), id: idField, url: z.string().url().max(500) }),
   z.object({ action: z.literal("resendAgreements"), id: idField }),
   z.object({ action: z.literal("reviewVerification"), id: idField, decision: z.enum(["approve", "reject"]), notes: z.string().trim().max(500).optional() }),
+  z.object({ action: z.literal("reviewDriver"), driverId: idField, decision: z.enum(["approve", "reject"]), notes: z.string().trim().max(500).optional() }),
   z.object({
     action: z.literal("updateRecord"), id: idField,
     mileageOut: optText, fuelOut: optText, conditionNotes: optText, mileageIn: optText, fuelIn: optText, actualReturnAt: optText,
@@ -218,6 +233,10 @@ export const Route = createFileRoute("/api/admin")({
               if (!b) return fail("Reservation not found", 404);
               if (!b.booking.agreements_signed_at) return fail("The renter has not signed the agreements yet");
               if (!["requested", "approved"].includes(b.booking.status)) return fail("Only open reservations can be approved");
+              const waiting = driversNotCleared(b);
+              if (waiting.length > 0) {
+                return fail(`Approve every other driver's ID first. Still waiting on: ${waiting.join(", ")}`);
+              }
               await db()
                 .prepare("UPDATE bookings SET status = 'approved', approved_at = COALESCE(approved_at, ?1), rep_name = ?2, rep_signed_at = COALESCE(rep_signed_at, ?1) WHERE id = ?3")
                 .bind(now, a.repName, a.id)
@@ -315,6 +334,31 @@ export const Route = createFileRoute("/api/admin")({
                 });
               }
               return json({ ok: true });
+            }
+            case "reviewDriver": {
+              const driver = await db().prepare("SELECT * FROM additional_drivers WHERE id = ?1").bind(a.driverId).first<AdditionalDriver>();
+              if (!driver) return fail("Driver not found", 404);
+              if (!driver.license_key || !driver.selfie_key) return fail("This driver has not uploaded ID photos yet");
+              const b = await getBookingBundle(driver.booking_id);
+              if (!b) return fail("Reservation not found", 404);
+              const approved = a.decision === "approve";
+              await db()
+                .prepare("UPDATE additional_drivers SET verification_status = ?1, reviewed_at = ?2, notes = ?3 WHERE id = ?4")
+                .bind(approved ? "approved" : "rejected", now, a.notes ?? null, driver.id)
+                .run();
+              if (!approved) {
+                const notes = a.notes ? `<p>${a.notes.replace(/</g, "&lt;")}</p>` : "";
+                await sendEmail({
+                  bookingId: b.booking.id,
+                  to: [b.customer.email],
+                  subject: `New ID photos needed for ${driver.full_name} (${b.booking.id})`,
+                  html: emailShell(
+                    `We need clearer ID photos of ${driver.full_name.replace(/</g, "&lt;")}`,
+                    `${notes}<p><a href="${origin}/booking/${encodeURIComponent(b.booking.id)}?token=${b.booking.token}">Open your reservation</a> to upload new photos for them, or send them their link again: <a href="${origin}${driverPath(driver)}">${origin}${driverPath(driver)}</a></p>`,
+                  ),
+                });
+              }
+              return json({ ok: true, emailed: approved ? undefined : emailConfigured() });
             }
             case "updateRecord": {
               await db()

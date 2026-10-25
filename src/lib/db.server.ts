@@ -44,12 +44,25 @@ export type Verification = {
   status: string; reviewed_at: string | null; notes: string | null; created_at: string;
 };
 
+/** Someone other than the renter who may drive the car on this reservation. */
+export type AdditionalDriver = {
+  id: string; booking_id: string; position: number; full_name: string; phone: string; dob: string;
+  dl_number: string; dl_state: string; dl_expiration: string; token: string;
+  /** pending | submitted | approved | rejected | not_required (approved on an earlier reservation) */
+  verification_status: string;
+  license_key: string | null; selfie_key: string | null; submitted_at: string | null; reviewed_at: string | null;
+  notes: string | null; created_at: string;
+};
+
+export const DRIVER_CLEARED = new Set(["approved", "not_required"]);
+
 export type BookingBundle = {
   booking: Booking;
   vehicle: Vehicle;
   customer: Customer;
   agreements: Agreement[];
   verification: Verification | null;
+  drivers: AdditionalDriver[];
 };
 
 export function db(): D1Database {
@@ -190,7 +203,36 @@ export async function getBookingBundle(id: string): Promise<BookingBundle | null
       .prepare("SELECT * FROM verifications WHERE booking_id = ?1 ORDER BY created_at DESC LIMIT 1")
       .bind(id)
       .first<Verification>()) ?? null;
-  return { booking, vehicle, customer, agreements, verification };
+  const drivers = await listDrivers(id);
+  return { booking, vehicle, customer, agreements, verification, drivers };
+}
+
+export async function listDrivers(bookingId: string): Promise<AdditionalDriver[]> {
+  return (
+    await db()
+      .prepare("SELECT * FROM additional_drivers WHERE booking_id = ?1 ORDER BY position ASC, created_at ASC")
+      .bind(bookingId)
+      .all<AdditionalDriver>()
+  ).results;
+}
+
+/**
+ * True when this license (number + date of birth) already passed an ID check:
+ * as an approved additional driver or as a verified renter.
+ */
+export async function licenseAlreadyVerified(dlNumber: string, dob: string): Promise<boolean> {
+  const asDriver = await db()
+    .prepare(
+      "SELECT id FROM additional_drivers WHERE lower(trim(dl_number)) = lower(trim(?1)) AND dob = ?2 AND verification_status = 'approved' LIMIT 1",
+    )
+    .bind(dlNumber, dob)
+    .first<{ id: string }>();
+  if (asDriver) return true;
+  const asRenter = await db()
+    .prepare("SELECT id FROM customers WHERE lower(trim(dl_number)) = lower(trim(?1)) AND dob = ?2 AND verified_at IS NOT NULL LIMIT 1")
+    .bind(dlNumber, dob)
+    .first<{ id: string }>();
+  return Boolean(asRenter);
 }
 
 export async function logEmail(

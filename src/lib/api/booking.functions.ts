@@ -4,12 +4,13 @@ import { z } from "zod";
 
 import { agreementDocs, customerView, docHashes, sendBookingReceived, toPublicVehicle } from "../bookings.server";
 import { addDays, ageOn, diffDays, isValidDay, parseRateTable, priceVehicle, todayDay } from "../dates";
-import { db, findVerifiedCustomer, getBookingBundle, getVehicle, isVehicleFree, listVehicles, newId, newToken, nextAgreementNumber, sha256Hex, unavailableDates } from "../db.server";
+import { db, findVerifiedCustomer, getBookingBundle, getVehicle, isVehicleFree, licenseAlreadyVerified, listVehicles, newId, newToken, nextAgreementNumber, sha256Hex, unavailableDates, type AdditionalDriver } from "../db.server";
 import { createPaymentLink, orderIsPaid, squareConfigured } from "../square.server";
-import type { AgreementDocs, CustomerBookingView, HomeData, PublicVehicle } from "../types";
+import type { AgreementDocs, CustomerBookingView, DriverPageView, HomeData, PublicVehicle } from "../types";
 
 const RANGE_DAYS = 180;
 const MAX_RENTAL_DAYS = 60;
+const MAX_DRIVERS = 3;
 
 export const getHomeData = createServerFn({ method: "GET" }).handler(async (): Promise<HomeData> => {
   const from = todayDay();
@@ -47,10 +48,26 @@ const bookingInput = z.object({
   dlNumber: z.string().trim().min(3).max(40),
   dlState: z.string().trim().min(2).max(40),
   dlExpiration: z.string().min(10).max(10),
+  /** Legacy free-text names, still accepted from pages loaded before drivers had their own fields. */
   additionalDrivers: z.string().trim().max(300).optional(),
+  drivers: z
+    .array(
+      z.object({
+        fullName: z.string().trim().min(2).max(120),
+        phone: z.string().trim().min(7).max(30),
+        dob: z.string().min(10).max(10),
+        dlNumber: z.string().trim().min(3).max(40),
+        dlState: z.string().trim().min(2).max(40),
+        dlExpiration: z.string().min(10).max(10),
+      }),
+    )
+    .max(MAX_DRIVERS)
+    .optional(),
   attestLicense: z.literal(true),
   origin: z.string().url(),
 });
+
+const sameLicense = (a: string, b: string) => a.trim().toLowerCase().replace(/[\s-]/g, "") === b.trim().toLowerCase().replace(/[\s-]/g, "");
 
 export const createBooking = createServerFn({ method: "POST" })
   .validator(bookingInput)
@@ -65,6 +82,17 @@ export const createBooking = createServerFn({ method: "POST" })
     if (days > MAX_RENTAL_DAYS) throw new Error(`Rentals are limited to ${MAX_RENTAL_DAYS} days per booking`);
     if (ageOn(data.dob, data.pickupDate) < 18) throw new Error("Renters must be at least 18 years old on the pickup date");
     if (data.dlExpiration <= data.returnDate) throw new Error("Your driver's license must be valid through the return date");
+
+    const drivers = data.drivers ?? [];
+    for (const [i, d] of drivers.entries()) {
+      const who = d.fullName || `Driver ${i + 1}`;
+      if (!isValidDay(d.dob)) throw new Error(`Enter a valid date of birth for ${who}`);
+      if (!isValidDay(d.dlExpiration)) throw new Error(`Enter a valid license expiration date for ${who}`);
+      if (ageOn(d.dob, data.pickupDate) < 18) throw new Error(`${who} must be at least 18 years old on the pickup date`);
+      if (d.dlExpiration <= data.returnDate) throw new Error(`${who}'s driver's license must be valid through the return date`);
+      if (sameLicense(d.dlNumber, data.dlNumber)) throw new Error(`${who} has the same license number as you. List only other people who will drive.`);
+      if (drivers.some((o, j) => j < i && sameLicense(o.dlNumber, d.dlNumber))) throw new Error(`${who} is listed twice`);
+    }
 
     const vehicle = await getVehicle(data.vehicleId);
     if (!vehicle || vehicle.active !== 1) throw new Error("That vehicle is not available for booking");
@@ -95,8 +123,24 @@ export const createBooking = createServerFn({ method: "POST" })
       .prepare(
         "INSERT INTO bookings (id, token, vehicle_id, customer_id, pickup_date, return_date, pickup_time, return_time, days, rate_breakdown, total_cents, deposit_cents, additional_drivers, verification_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
       )
-      .bind(id, token, vehicle.id, customerId, data.pickupDate, data.returnDate, data.pickupTime, data.returnTime, days, price.breakdown, price.total_cents, vehicle.deposit_cents, data.additionalDrivers?.trim() || null, verified ? "not_required" : "pending")
+      .bind(
+        id, token, vehicle.id, customerId, data.pickupDate, data.returnDate, data.pickupTime, data.returnTime, days, price.breakdown,
+        price.total_cents, vehicle.deposit_cents,
+        drivers.length > 0 ? drivers.map((d) => d.fullName).join(", ") : data.additionalDrivers?.trim() || null,
+        verified ? "not_required" : "pending",
+      )
       .run();
+
+    // Drivers go in before the agreement text is hashed, so both agreements list them.
+    for (const [i, d] of drivers.entries()) {
+      const cleared = await licenseAlreadyVerified(d.dlNumber, d.dob);
+      await db()
+        .prepare(
+          "INSERT INTO additional_drivers (id, booking_id, position, full_name, phone, dob, dl_number, dl_state, dl_expiration, token, verification_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )
+        .bind(newId("drv"), id, i, d.fullName, d.phone, d.dob, d.dlNumber, d.dlState, d.dlExpiration, newToken(), cleared ? "not_required" : "pending")
+        .run();
+    }
 
     const bundle = await getBookingBundle(id);
     if (!bundle) throw new Error("The reservation could not be saved");
@@ -123,6 +167,28 @@ async function loadForCustomer(id: string, token: string) {
 export const getCustomerBooking = createServerFn({ method: "POST" })
   .validator(access)
   .handler(async ({ data }): Promise<CustomerBookingView> => customerView(await loadForCustomer(data.id, data.token)));
+
+/** An additional driver's own ID check page, opened with the private link the renter sends them. */
+export const getDriverPage = createServerFn({ method: "POST" })
+  .validator(access)
+  .handler(async ({ data }): Promise<DriverPageView> => {
+    const driver = await db().prepare("SELECT * FROM additional_drivers WHERE id = ?1").bind(data.id).first<AdditionalDriver>();
+    if (!driver || driver.token !== data.token) throw new Error("Driver not found");
+    const bundle = await getBookingBundle(driver.booking_id);
+    if (!bundle) throw new Error("Driver not found");
+    const { booking, vehicle, customer } = bundle;
+    return {
+      driverId: driver.id,
+      token: driver.token,
+      fullName: driver.full_name,
+      verificationStatus: driver.verification_status,
+      renterName: customer.full_name,
+      vehicleName: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
+      pickupDate: booking.pickup_date,
+      returnDate: booking.return_date,
+      open: booking.status === "requested" || booking.status === "approved",
+    };
+  });
 
 export const getAgreementDocs = createServerFn({ method: "POST" })
   .validator(access)

@@ -1,12 +1,13 @@
 import { useRouter } from "@tanstack/react-router";
 import { Check } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { confirmPayment, startCheckout } from "@/lib/api/booking.functions";
+import { BRAND } from "@/lib/brand";
 import { fmtMoney } from "@/lib/dates";
-import type { CustomerBookingView } from "@/lib/types";
+import type { CustomerBookingView, CustomerDriver } from "@/lib/types";
 
-import { ContinueButton } from "./form";
+import { IdPhotoForm } from "./id-photo-form";
 import { ReservationSummary } from "./summary";
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -47,64 +48,69 @@ function Step({ n, title, state, children }: { n: number; title: string; state: 
   );
 }
 
-const fileInputClass =
-  "block w-full text-sm text-subtle file:mr-4 file:h-11 file:cursor-pointer file:border-0 file:bg-ink file:px-4 file:font-medium file:text-surface hover:file:bg-cobalt-deep";
+const DRIVER_STATUS: Record<string, { label: string; cls: string }> = {
+  pending: { label: "Photos needed", cls: "text-cobalt" },
+  rejected: { label: "New photos needed", cls: "text-danger" },
+  submitted: { label: "Under review", cls: "text-subtle" },
+  approved: { label: "Approved", cls: "text-ok" },
+  not_required: { label: "Already verified", cls: "text-ok" },
+};
 
-function usePreview(file: File | null) {
-  const url = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
-  return url;
-}
+const driverNeedsPhotos = (d: CustomerDriver) => d.verificationStatus === "pending" || d.verificationStatus === "rejected";
+const driverCleared = (d: CustomerDriver) => d.verificationStatus === "approved" || d.verificationStatus === "not_required";
 
-function IdUpload({ b, onDone }: { b: CustomerBookingView; onDone: () => void }) {
-  const [license, setLicense] = useState<File | null>(null);
-  const [selfie, setSelfie] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const licensePreview = usePreview(license);
-  const selfiePreview = usePreview(selfie);
+function DriverCheck({ b, d, onDone }: { b: CustomerBookingView; d: CustomerDriver; onDone: () => void }) {
+  const [uploading, setUploading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const st = DRIVER_STATUS[d.verificationStatus] ?? { label: d.verificationStatus, cls: "text-subtle" };
+  const first = d.fullName.split(" ")[0] || d.fullName;
 
-  async function submit() {
-    if (!license || !selfie) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("id", b.id);
-      form.append("token", b.token);
-      form.append("license", license);
-      form.append("selfie", selfie);
-      const res = await fetch("/api/verify", { method: "POST", body: form });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (!res.ok || !body.ok) throw new Error(body.error ?? "Upload failed. Please try again.");
-      onDone();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed. Please try again.");
-    } finally {
-      setBusy(false);
+  async function sendLink() {
+    const url = `${window.location.origin}${d.link}`;
+    const text = `${b.customer.fullName} listed you as a driver on a ${BRAND.name} reservation. Please upload a photo of your license and a selfie here:`;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: "Your ID check", text, url });
+        return;
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+      }
     }
+    await navigator.clipboard.writeText(url).catch(() => undefined);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2500);
   }
 
   return (
-    <div className="space-y-5">
-      <p className="leading-relaxed text-subtle">
-        Required once, before you get the keys. Take clear, well-lit photos. Use your physical license; a photo of a screen, a permit or an international driving permit alone is not accepted.
-      </p>
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <label htmlFor="license-file" className="block text-sm font-medium">Front of your driver's license</label>
-          <input id="license-file" type="file" accept="image/*,.heic,.heif" onChange={(e) => setLicense(e.target.files?.[0] ?? null)} className={`mt-2 ${fileInputClass}`} />
-          {licensePreview ? <img src={licensePreview} alt="Your license photo preview" className="mt-3 aspect-[3/2] w-full border border-line object-cover" /> : null}
-        </div>
-        <div>
-          <label htmlFor="selfie-file" className="block text-sm font-medium">Selfie holding your license next to your face</label>
-          <input id="selfie-file" type="file" accept="image/*,.heic,.heif" onChange={(e) => setSelfie(e.target.files?.[0] ?? null)} className={`mt-2 ${fileInputClass}`} />
-          {selfiePreview ? <img src={selfiePreview} alt="Your selfie preview" className="mt-3 aspect-[3/2] w-full border border-line object-cover" /> : null}
-        </div>
+    <li className="py-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-medium">{d.fullName}</span>
+        <span className={`text-sm font-medium ${st.cls}`}>{st.label}</span>
       </div>
-      {error ? <p role="alert" className="border border-danger bg-danger-tint p-4 text-sm text-danger">{error}</p> : null}
-      <ContinueButton type="button" onClick={submit} disabled={!license || !selfie} busy={busy}>Upload photos</ContinueButton>
-    </div>
+      {driverNeedsPhotos(d) ? (
+        <div className="mt-3 space-y-4">
+          {d.verificationStatus === "rejected" ? (
+            <p className="border border-danger bg-danger-tint p-3 text-sm text-danger">We need clearer photos of {d.fullName}. Please upload them again.</p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={sendLink} className="inline-flex min-h-11 items-center bg-cobalt px-4 text-sm font-medium text-surface hover:bg-cobalt-deep">
+              {copied ? "Link copied. Paste it in a text to them." : `Send ${first} their link`}
+            </button>
+            <button
+              type="button"
+              aria-expanded={uploading}
+              onClick={() => setUploading((v) => !v)}
+              className="inline-flex min-h-11 items-center border border-line bg-surface px-4 text-sm font-medium hover:border-ink"
+            >
+              {uploading ? "Close" : "Upload their photos here"}
+            </button>
+          </div>
+          {uploading ? (
+            <IdPhotoForm endpoint="/api/verify-driver" fields={{ driverId: d.id, token: b.token }} subject={{ name: d.fullName }} idPrefix={`drv-${d.id}`} onDone={onDone} />
+          ) : null}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -158,6 +164,9 @@ export function ReservationPage({ b, justSigned, returnedFromPay }: { b: Custome
       : b.verificationStatus === "submitted"
         ? "review"
         : "current";
+
+  const hasDrivers = b.drivers.length > 0;
+  const driversState: StepState = b.drivers.every(driverCleared) ? "done" : b.drivers.some(driverNeedsPhotos) ? "current" : "review";
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10 md:py-14">
@@ -230,11 +239,23 @@ export function ReservationPage({ b, justSigned, returnedFromPay }: { b: Custome
                 {b.verificationStatus === "rejected" ? (
                   <p className="mb-4 border border-danger bg-danger-tint p-4 text-sm text-danger">We need clearer photos. Please upload them again.</p>
                 ) : null}
-                <IdUpload b={b} onDone={() => void router.invalidate()} />
+                <IdPhotoForm endpoint="/api/verify" fields={{ id: b.id, token: b.token }} subject="you" idPrefix="renter" onDone={() => void router.invalidate()} />
               </>
             )}
           </Step>
-          <Step n={4} title="Approval and pickup" state={b.pickupAddress ? "done" : "waiting"}>
+          {hasDrivers ? (
+            <Step n={4} title={b.drivers.length === 1 ? "Verify the other driver" : "Verify the other drivers"} state={driversState}>
+              <p className="text-sm text-subtle">
+                Everyone you listed needs the same one-time ID check before they drive. Send them their own link, or upload their photos here if they're with you.
+              </p>
+              <ul className="mt-2 divide-y divide-line">
+                {b.drivers.map((d) => (
+                  <DriverCheck key={d.id} b={b} d={d} onDone={() => void router.invalidate()} />
+                ))}
+              </ul>
+            </Step>
+          ) : null}
+          <Step n={hasDrivers ? 5 : 4} title="Approval and pickup" state={b.pickupAddress ? "done" : "waiting"}>
             <p className="text-sm text-subtle">
               {b.pickupAddress
                 ? "You're approved. The pickup address is at the top of this page and in your email."

@@ -11,6 +11,8 @@ export function ReservationSummary({ b }: { b: CustomerBookingView }) {
     ["Return", `${prettyDay(b.returnDate)} at ${fmtTime12(b.returnTime)}`],
     ["Rental", `${b.days} day${b.days === 1 ? "" : "s"}: ${b.breakdown}`],
   ];
+  const otherDrivers = b.drivers.length > 0 ? b.drivers.map((d) => d.fullName).join(", ") : b.additionalDrivers;
+  if (otherDrivers) rows.push(["Other drivers", otherDrivers]);
   if (b.depositCents > 0) rows.push(["Security deposit", fmtMoney(b.depositCents)]);
   rows.push(["Total", fmtMoney(b.totalCents + b.depositCents)]);
   return (

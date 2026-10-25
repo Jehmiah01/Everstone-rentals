@@ -19,6 +19,16 @@ export type AgreementDoc = {
   signingNote: string;
 };
 
+export type AgreementDriver = { fullName: string; phone: string; dob: string; dlNumber: string; dlState: string; dlExpiration: string };
+
+/** "Jane Doe (License D123, MD; born May 1, 2000; expires June 2, 2030); ..." or the legacy free-text names. */
+function driversLine(b: AgreementContext["booking"]): string {
+  if (b.drivers.length === 0) return b.additionalDrivers && b.additionalDrivers.trim() !== "" ? b.additionalDrivers : "None";
+  return b.drivers
+    .map((d) => `${d.fullName} (License ${d.dlNumber}, ${d.dlState}; born ${prettyDay(d.dob)}; expires ${prettyDay(d.dlExpiration)}; phone ${d.phone})`)
+    .join("; ");
+}
+
 export type AgreementContext = {
   number: string;
   company: { name: string; address: string };
@@ -34,6 +44,8 @@ export type AgreementContext = {
   booking: {
     pickupDate: string; pickupTime: string; returnDate: string; returnTime: string; days: number;
     breakdown: string; totalCents: number; additionalDrivers: string;
+    /** Listed additional drivers with license details (empty on reservations made before drivers had their own records). */
+    drivers: AgreementDriver[];
     paymentStatus: string; paidAt: string | null; paymentMethod: string;
     mileageOut: string; fuelOut: string; conditionNotes: string; preRentalPhotos: boolean;
     actualReturn: string; mileageIn: string; fuelIn: string; damage: string; fees: string;
@@ -139,6 +151,10 @@ export function buildRentalAgreement(ctx: AgreementContext): AgreementDoc {
         number: "13", heading: "Driver Requirements",
         blocks: [{ kind: "paragraphs", text: [
           "Renter must be at least 18 years old, possess a valid driver's license (a learner's permit, a digital copy of a license, or an international driving permit on its own is not accepted), have no suspended or revoked driving privileges, complete a one-time identity and license verification with Owner at the first booking, and comply with all insurance/protection requirements applicable to the rental.",
+          // Added only when drivers are listed, so agreements signed before this clause existed render unchanged.
+          ...(b.drivers.length > 0
+            ? ["Each additional authorized driver listed in Section 24 must meet the same requirements and complete the same identity and license verification with Owner before operating the Vehicle. No one else may operate the Vehicle. Renter remains responsible for the Vehicle and for each additional driver's use of it under this Agreement."]
+            : []),
         ] }],
       },
       {
@@ -191,6 +207,7 @@ export function buildRentalAgreement(ctx: AgreementContext): AgreementDoc {
           { label: "Driver License #", value: c.dlNumber },
           { label: "Issuing State", value: c.dlState },
           { label: "Rental Period", value: rentalPeriodLine(b) },
+          ...(b.drivers.length > 0 ? [{ label: "Additional Authorized Driver(s)", value: driversLine(b) }] : []),
         ] }],
       },
     ],
@@ -226,7 +243,7 @@ export function buildEasySignAgreement(ctx: AgreementContext): AgreementDoc {
           { label: "Issuing State/Country", value: c.dlState },
           { label: "Date of Birth", value: prettyDay(c.dob) },
           { label: "License Expiration", value: prettyDay(c.dlExpiration) },
-          { label: "Additional Authorized Driver(s)", value: or(b.additionalDrivers, "None") },
+          { label: "Additional Authorized Driver(s)", value: driversLine(b) },
         ] }],
       },
       {

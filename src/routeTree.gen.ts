@@ -13,7 +13,9 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DriverIdRouteImport } from './routes/driver.$id'
 import { Route as BookSlugRouteImport } from './routes/book.$slug'
+import { Route as ApiVerifyDriverRouteImport } from './routes/api/verify-driver'
 import { Route as ApiVerifyRouteImport } from './routes/api/verify'
 import { Route as ApiSignRouteImport } from './routes/api/sign'
 import { Route as ApiAdminRouteImport } from './routes/api/admin'
@@ -42,9 +44,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DriverIdRoute = DriverIdRouteImport.update({
+  id: '/driver/$id',
+  path: '/driver/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BookSlugRoute = BookSlugRouteImport.update({
   id: '/book/$slug',
   path: '/book/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiVerifyDriverRoute = ApiVerifyDriverRouteImport.update({
+  id: '/api/verify-driver',
+  path: '/api/verify-driver',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiVerifyRoute = ApiVerifyRouteImport.update({
@@ -91,7 +103,9 @@ export interface FileRoutesByFullPath {
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
   '/api/verify': typeof ApiVerifyRoute
+  '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
+  '/driver/$id': typeof DriverIdRoute
   '/api/files/$': typeof ApiFilesSplatRoute
   '/api/square/webhook': typeof ApiSquareWebhookRoute
   '/booking/$id/sign': typeof BookingIdSignRoute
@@ -105,7 +119,9 @@ export interface FileRoutesByTo {
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
   '/api/verify': typeof ApiVerifyRoute
+  '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
+  '/driver/$id': typeof DriverIdRoute
   '/api/files/$': typeof ApiFilesSplatRoute
   '/api/square/webhook': typeof ApiSquareWebhookRoute
   '/booking/$id/sign': typeof BookingIdSignRoute
@@ -120,7 +136,9 @@ export interface FileRoutesById {
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
   '/api/verify': typeof ApiVerifyRoute
+  '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
+  '/driver/$id': typeof DriverIdRoute
   '/api/files/$': typeof ApiFilesSplatRoute
   '/api/square/webhook': typeof ApiSquareWebhookRoute
   '/booking/$id/sign': typeof BookingIdSignRoute
@@ -136,7 +154,9 @@ export interface FileRouteTypes {
     | '/api/admin'
     | '/api/sign'
     | '/api/verify'
+    | '/api/verify-driver'
     | '/book/$slug'
+    | '/driver/$id'
     | '/api/files/$'
     | '/api/square/webhook'
     | '/booking/$id/sign'
@@ -150,7 +170,9 @@ export interface FileRouteTypes {
     | '/api/admin'
     | '/api/sign'
     | '/api/verify'
+    | '/api/verify-driver'
     | '/book/$slug'
+    | '/driver/$id'
     | '/api/files/$'
     | '/api/square/webhook'
     | '/booking/$id/sign'
@@ -164,7 +186,9 @@ export interface FileRouteTypes {
     | '/api/admin'
     | '/api/sign'
     | '/api/verify'
+    | '/api/verify-driver'
     | '/book/$slug'
+    | '/driver/$id'
     | '/api/files/$'
     | '/api/square/webhook'
     | '/booking/$id/sign'
@@ -179,7 +203,9 @@ export interface RootRouteChildren {
   ApiAdminRoute: typeof ApiAdminRoute
   ApiSignRoute: typeof ApiSignRoute
   ApiVerifyRoute: typeof ApiVerifyRoute
+  ApiVerifyDriverRoute: typeof ApiVerifyDriverRoute
   BookSlugRoute: typeof BookSlugRoute
+  DriverIdRoute: typeof DriverIdRoute
   ApiFilesSplatRoute: typeof ApiFilesSplatRoute
   ApiSquareWebhookRoute: typeof ApiSquareWebhookRoute
   BookingIdSignRoute: typeof BookingIdSignRoute
@@ -216,11 +242,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/driver/$id': {
+      id: '/driver/$id'
+      path: '/driver/$id'
+      fullPath: '/driver/$id'
+      preLoaderRoute: typeof DriverIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/book/$slug': {
       id: '/book/$slug'
       path: '/book/$slug'
       fullPath: '/book/$slug'
       preLoaderRoute: typeof BookSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/verify-driver': {
+      id: '/api/verify-driver'
+      path: '/api/verify-driver'
+      fullPath: '/api/verify-driver'
+      preLoaderRoute: typeof ApiVerifyDriverRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/verify': {
@@ -283,7 +323,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAdminRoute: ApiAdminRoute,
   ApiSignRoute: ApiSignRoute,
   ApiVerifyRoute: ApiVerifyRoute,
+  ApiVerifyDriverRoute: ApiVerifyDriverRoute,
   BookSlugRoute: BookSlugRoute,
+  DriverIdRoute: DriverIdRoute,
   ApiFilesSplatRoute: ApiFilesSplatRoute,
   ApiSquareWebhookRoute: ApiSquareWebhookRoute,
   BookingIdSignRoute: BookingIdSignRoute,

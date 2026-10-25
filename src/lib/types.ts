@@ -36,12 +36,35 @@ export type CustomerBookingView = {
   pickupAddress: string | null;
   agreements: { kind: string; status: string; signedAt: string | null; pdfUrl: string | null }[];
   verification: { status: string; licenseUrl: string | null; selfieUrl: string | null } | null;
+  /** Additional drivers and their ID check. `link` is a site-relative URL the renter can send to that driver. */
+  drivers: CustomerDriver[];
   squareReady: boolean;
   emailReady: boolean;
   createdAt: string;
 };
 
+export type CustomerDriver = { id: string; fullName: string; verificationStatus: string; link: string };
+
+/** What a listed driver sees on their own ID check page (opened with the driver's private link). */
+export type DriverPageView = {
+  driverId: string;
+  token: string;
+  fullName: string;
+  verificationStatus: string;
+  renterName: string;
+  vehicleName: string;
+  pickupDate: string;
+  returnDate: string;
+  open: boolean;
+};
+
 export type AgreementDocs = { rental: AgreementDoc; easy: AgreementDoc };
+
+export type AdminDriver = {
+  id: string; fullName: string; phone: string; dob: string; dlNumber: string; dlState: string; dlExpiration: string;
+  verificationStatus: string; licenseUrl: string | null; selfieUrl: string | null; submittedAt: string | null;
+  notes: string | null; link: string;
+};
 
 export type AdminAgreement = {
   kind: string; status: string; signedAt: string | null; signerName: string | null; ip: string | null;
@@ -64,6 +87,7 @@ export type AdminBooking = {
   };
   agreements: AdminAgreement[];
   verification: { status: string; licenseUrl: string | null; selfieUrl: string | null; createdAt: string; notes: string | null } | null;
+  drivers: AdminDriver[];
   customerLink: string;
 };
 

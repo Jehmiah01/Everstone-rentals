@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, type FormEvent } from "react";
+import { Plus } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 
 import { LICENSE_ATTESTATION } from "@/lib/agreements";
 import { createBooking } from "@/lib/api/booking.functions";
@@ -27,14 +28,19 @@ const NEXT_STEPS = [
   "Fill in your details below.",
   "Read and sign your rental paperwork, all on one page.",
   "Pay securely by card with Square.",
-  "Upload a photo of your license and a selfie (first booking only).",
+  "Upload a photo of your license and a selfie (first booking only). Any other drivers do the same.",
 ];
 
 type FormState = {
   pickupDate: string; returnDate: string; pickupTime: string; returnTime: string;
   fullName: string; email: string; phone: string; address: string; city: string; state: string; zip: string;
-  dob: string; dlNumber: string; dlState: string; dlExpiration: string; additionalDrivers: string; attest: boolean;
+  dob: string; dlNumber: string; dlState: string; dlExpiration: string; attest: boolean;
 };
+
+const MAX_DRIVERS = 3;
+type DriverDraft = { key: number; fullName: string; phone: string; dob: string; dlNumber: string; dlState: string; dlExpiration: string };
+type DriverField = Exclude<keyof DriverDraft, "key">;
+const normLicense = (s: string) => s.trim().toLowerCase().replace(/[\s-]/g, "");
 
 export function BookForm({ vehicle, unavailable, from, to, start }: {
   vehicle: PublicVehicle; unavailable: string[]; from: string; to: string; start?: string;
@@ -45,8 +51,15 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
   const [f, setF] = useState<FormState>({
     pickupDate: firstPickup, returnDate: addDays(firstPickup, 7), pickupTime: "10:00", returnTime: "10:00",
     fullName: "", email: "", phone: "", address: "", city: "", state: "MD", zip: "",
-    dob: "", dlNumber: "", dlState: "MD", dlExpiration: "", additionalDrivers: "", attest: false,
+    dob: "", dlNumber: "", dlState: "MD", dlExpiration: "", attest: false,
   });
+  const [drivers, setDrivers] = useState<DriverDraft[]>([]);
+  const nextDriverKey = useRef(1);
+  const addDriver = () =>
+    setDrivers((p) => [...p, { key: nextDriverKey.current++, fullName: "", phone: "", dob: "", dlNumber: "", dlState: "MD", dlExpiration: "" }]);
+  const removeDriver = (key: number) => setDrivers((p) => p.filter((d) => d.key !== key));
+  const setDriver = (key: number, field: DriverField, value: string) =>
+    setDrivers((p) => p.map((d) => (d.key === key ? { ...d, [field]: value } : d)));
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -81,7 +94,21 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
   if (!isValidDay(f.dlExpiration)) errors.dlExpiration = "Enter the expiration date";
   else if (datesValid && f.dlExpiration <= f.returnDate) errors.dlExpiration = "Your license must stay valid past your return date";
   if (!f.attest) errors.attest = "Please confirm the license requirements";
-  const hasErrors = Object.keys(errors).length > 0;
+  const driverErrors = drivers.map((d, i) => {
+    const e: Partial<Record<DriverField, string>> = {};
+    if (d.fullName.trim().length < 2) e.fullName = "Enter their full legal name";
+    if (d.phone.replace(/\D/g, "").length < 10) e.phone = "Enter a 10-digit phone number";
+    if (!isValidDay(d.dob)) e.dob = "Enter their date of birth";
+    else if (isValidDay(f.pickupDate) && ageOn(d.dob, f.pickupDate) < 18) e.dob = "Drivers must be at least 18 on the pickup date";
+    if (d.dlNumber.trim().length < 3) e.dlNumber = "Enter their driver's license number";
+    else if (f.dlNumber.trim() && normLicense(d.dlNumber) === normLicense(f.dlNumber)) e.dlNumber = "That's your license number. List only other people who will drive.";
+    else if (drivers.some((o, j) => j < i && normLicense(o.dlNumber) === normLicense(d.dlNumber))) e.dlNumber = "This license is already listed above";
+    if (d.dlState.trim().length < 2) e.dlState = "Enter the issuing state or country";
+    if (!isValidDay(d.dlExpiration)) e.dlExpiration = "Enter the expiration date";
+    else if (datesValid && d.dlExpiration <= f.returnDate) e.dlExpiration = "Their license must stay valid past your return date";
+    return e;
+  });
+  const hasErrors = Object.keys(errors).length > 0 || driverErrors.some((e) => Object.keys(e).length > 0);
   const err = (k: keyof FormState) => (submitted || (k === "returnDate" && conflict) ? (errors[k] ?? null) : null);
   const a11y = (k: keyof FormState) => ({
     "aria-invalid": Boolean(err(k)),
@@ -103,7 +130,11 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
           vehicleId: vehicle.id, pickupDate: f.pickupDate, returnDate: f.returnDate, pickupTime: f.pickupTime, returnTime: f.returnTime,
           fullName: f.fullName.trim(), email: f.email.trim(), phone: f.phone.trim(), address: f.address.trim(), city: f.city.trim(),
           state: f.state.trim(), zip: f.zip.trim(), dob: f.dob, dlNumber: f.dlNumber.trim(), dlState: f.dlState.trim(),
-          dlExpiration: f.dlExpiration, additionalDrivers: f.additionalDrivers.trim() || undefined, attestLicense: true,
+          dlExpiration: f.dlExpiration,
+          drivers: drivers.map((d) => ({
+            fullName: d.fullName.trim(), phone: d.phone.trim(), dob: d.dob, dlNumber: d.dlNumber.trim(), dlState: d.dlState.trim(), dlExpiration: d.dlExpiration,
+          })),
+          attestLicense: true,
           origin: window.location.origin,
         },
       });
@@ -128,6 +159,26 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
       />
     </Field>
   );
+
+  const driverText = (d: DriverDraft, i: number, k: DriverField, label: string, opts: { type?: string; hint?: string; inputMode?: "numeric" | "tel" | "text" } = {}) => {
+    const id = `driver-${d.key}-${k}`;
+    const error = submitted ? (driverErrors[i]?.[k] ?? null) : null;
+    return (
+      <Field id={id} label={label} hint={opts.hint} error={error}>
+        <input
+          id={id}
+          type={opts.type ?? "text"}
+          inputMode={opts.inputMode}
+          autoComplete="off"
+          value={d[k]}
+          onChange={(e) => setDriver(d.key, k, e.target.value)}
+          className={inputClass}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${id}-error` : undefined}
+        />
+      </Field>
+    );
+  };
 
   return (
     <div className="mx-auto grid max-w-6xl gap-10 px-5 py-10 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:py-14">
@@ -270,9 +321,41 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
             {text("dlState", "Issuing state or country")}
           </div>
           {text("dlExpiration", "License expiration date", { type: "date" })}
-          <Field id="additionalDrivers" label="Additional drivers (optional)" hint="Full names of anyone else who will drive. They must meet the same requirements.">
-            <textarea id="additionalDrivers" rows={2} value={f.additionalDrivers} onChange={(e) => set("additionalDrivers", e.target.value)} className={`${inputClass} h-auto py-3`} />
-          </Field>
+        </fieldset>
+
+        <fieldset className="space-y-5">
+          <legend><SectionTitle>Other drivers</SectionTitle></legend>
+          <p className="leading-relaxed text-subtle">
+            Only you and the people you list here may drive the car. Each one must be 18 or older with a valid physical license, and does the same quick ID check before driving.
+          </p>
+          {drivers.map((d, i) => (
+            <div key={d.key} className="space-y-5 border border-line bg-surface p-5">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-semibold">Other driver {drivers.length > 1 ? i + 1 : ""}</h3>
+                <button type="button" onClick={() => removeDriver(d.key)} className="min-h-11 text-sm font-medium text-danger underline underline-offset-4">
+                  Remove
+                </button>
+              </div>
+              {driverText(d, i, "fullName", "Full legal name", { hint: "As it appears on their driver's license" })}
+              <div className="grid gap-5 sm:grid-cols-2">
+                {driverText(d, i, "phone", "Mobile phone", { type: "tel", inputMode: "tel" })}
+                {driverText(d, i, "dob", "Date of birth", { type: "date" })}
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2">
+                {driverText(d, i, "dlNumber", "License number")}
+                {driverText(d, i, "dlState", "Issuing state or country")}
+              </div>
+              {driverText(d, i, "dlExpiration", "License expiration date", { type: "date" })}
+            </div>
+          ))}
+          {drivers.length < MAX_DRIVERS ? (
+            <button type="button" onClick={addDriver} className="inline-flex min-h-12 items-center gap-2 border border-ink bg-surface px-5 font-medium text-ink hover:bg-ground">
+              <Plus className="size-4" aria-hidden="true" />
+              {drivers.length === 0 ? "Add another driver" : "Add one more driver"}
+            </button>
+          ) : (
+            <p className="text-sm text-subtle">Up to {MAX_DRIVERS} other drivers per reservation.</p>
+          )}
         </fieldset>
 
         <fieldset className="space-y-3">
