@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { agreementDocs, customerView, docHashes, sendBookingReceived, toPublicVehicle } from "../bookings.server";
-import { addDays, ageOn, diffDays, isValidDay, parseRateTable, priceVehicle, todayDay } from "../dates";
+import { addDays, ageOn, diffDays, extraDriverCharge, isValidDay, parseRateTable, priceVehicle, todayDay } from "../dates";
 import { db, findVerifiedCustomer, getBookingBundle, getVehicle, isVehicleFree, licenseAlreadyVerified, listVehicles, newId, newToken, nextAgreementNumber, sha256Hex, unavailableDates, type AdditionalDriver } from "../db.server";
 import { createPaymentLink, orderIsPaid, squareConfigured } from "../square.server";
 import type { AgreementDocs, CustomerBookingView, DriverPageView, HomeData, PublicVehicle } from "../types";
@@ -101,6 +101,9 @@ export const createBooking = createServerFn({ method: "POST" })
     }
 
     const price = priceVehicle(days, { rateTable: parseRateTable(vehicle.rate_table), dailyRateCents: vehicle.daily_rate_cents, weeklyRateCents: vehicle.weekly_rate_cents });
+    const driverFee = extraDriverCharge(drivers.length, days, vehicle.driver_fee_cents ?? 0);
+    const totalCents = price.total_cents + driverFee.cents;
+    const breakdown = driverFee.cents > 0 ? `${price.breakdown} + ${driverFee.line}` : price.breakdown;
     const verified = await findVerifiedCustomer(data.email, data.dlNumber);
     let customerId: string;
     if (verified) {
@@ -121,13 +124,14 @@ export const createBooking = createServerFn({ method: "POST" })
     const token = newToken();
     await db()
       .prepare(
-        "INSERT INTO bookings (id, token, vehicle_id, customer_id, pickup_date, return_date, pickup_time, return_time, days, rate_breakdown, total_cents, deposit_cents, additional_drivers, verification_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO bookings (id, token, vehicle_id, customer_id, pickup_date, return_date, pickup_time, return_time, days, rate_breakdown, total_cents, deposit_cents, additional_drivers, verification_status, driver_fee_cents) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
       )
       .bind(
-        id, token, vehicle.id, customerId, data.pickupDate, data.returnDate, data.pickupTime, data.returnTime, days, price.breakdown,
-        price.total_cents, vehicle.deposit_cents,
+        id, token, vehicle.id, customerId, data.pickupDate, data.returnDate, data.pickupTime, data.returnTime, days, breakdown,
+        totalCents, vehicle.deposit_cents,
         drivers.length > 0 ? drivers.map((d) => d.fullName).join(", ") : data.additionalDrivers?.trim() || null,
         verified ? "not_required" : "pending",
+        driverFee.cents,
       )
       .run();
 

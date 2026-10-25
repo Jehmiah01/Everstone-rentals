@@ -23,6 +23,7 @@ export function toPublicVehicle(v: Vehicle): PublicVehicle {
     seats: v.seats, transmission: v.transmission, fuel: v.fuel, description: v.description, photoUrl: v.photo_url,
     rateConfirmed: v.rate_confirmed === 1,
     rateTable: parseRateTable(v.rate_table),
+    driverFeeCents: v.driver_fee_cents ?? 0,
   };
 }
 

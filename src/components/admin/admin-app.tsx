@@ -611,7 +611,7 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
 
 type VehicleDraft = {
   id?: string; year: string; make: string; model: string; color: string; vin: string; plate: string; ownerName: string;
-  tiers: string[]; deposit: string; lateFee: string; lateDaily: string; seats: string; transmission: string;
+  tiers: string[]; deposit: string; driverFee: string; lateFee: string; lateDaily: string; seats: string; transmission: string;
   fuel: string; description: string; photoUrl: string; active: boolean;
 };
 
@@ -621,6 +621,7 @@ const draftFrom = (v?: AdminVehicle): VehicleDraft => ({
   id: v?.id, year: v ? String(v.year) : "", make: v?.make ?? "", model: v?.model ?? "", color: v?.color ?? "",
   vin: v?.vin ?? "", plate: v?.plate ?? "", ownerName: v?.ownerName ?? "",
   tiers: (v?.rateTable ?? DEFAULT_TIERS).map((c) => dollars(c)), deposit: dollars(v?.depositCents ?? 0),
+  driverFee: dollars(v?.driverFeeCents ?? 1000),
   lateFee: dollars(v?.lateFeeCents ?? 2500), lateDaily: dollars(v?.lateDailyCents ?? 1000), seats: String(v?.seats ?? 5),
   transmission: v?.transmission ?? "Automatic", fuel: v?.fuel ?? "Gasoline", description: v?.description ?? "",
   photoUrl: v?.photoUrl ?? "", active: v ? v.active : true,
@@ -636,7 +637,7 @@ function VehicleForm({ vehicle, run, busy, onSaved, reload, setNotice }: {
 
   async function save() {
     const tierCents = d.tiers.map(toCents);
-    const cents = { deposit: toCents(d.deposit), lateFee: toCents(d.lateFee), lateDaily: toCents(d.lateDaily) };
+    const cents = { deposit: toCents(d.deposit), driverFee: toCents(d.driverFee), lateFee: toCents(d.lateFee), lateDaily: toCents(d.lateDaily) };
     if (tierCents.some((c) => c === null) || Object.values(cents).some((c) => c === null)) {
       setNotice({ kind: "error", text: "Enter every rate as a dollar amount, for example 50 or 350.00" });
       return;
@@ -647,7 +648,7 @@ function VehicleForm({ vehicle, run, busy, onSaved, reload, setNotice }: {
         vehicle: {
           id: d.id, year: Number.parseInt(d.year, 10), make: d.make, model: d.model, color: d.color || undefined,
           vin: d.vin || undefined, plate: d.plate || undefined, ownerName: d.ownerName || undefined,
-          dailyRateCents: tierCents[0], weeklyRateCents: tierCents[6], rateTable: tierCents as number[], depositCents: cents.deposit,
+          dailyRateCents: tierCents[0], weeklyRateCents: tierCents[6], rateTable: tierCents as number[], depositCents: cents.deposit, driverFeeCents: cents.driverFee,
           lateFeeCents: cents.lateFee, lateDailyCents: cents.lateDaily, seats: Number.parseInt(d.seats, 10) || 5,
           transmission: d.transmission || undefined, fuel: d.fuel || undefined, description: d.description || undefined,
           photoUrl: d.photoUrl || undefined, active: d.active,
@@ -712,6 +713,7 @@ function VehicleForm({ vehicle, run, busy, onSaved, reload, setNotice }: {
         <p className="mt-2 text-xs text-subtle">Rentals over 7 days: the 7-day price for each full week, plus the price for the remaining days.</p>
       </fieldset>
       {input("deposit", "Security deposit ($)", { inputMode: "decimal" })}
+      {input("driverFee", "Extra driver fee per day ($)", { inputMode: "decimal" })}
       {input("seats", "Seats", { inputMode: "numeric" })}
       {input("lateFee", "Late payment fee ($)", { inputMode: "decimal" })}
       {input("lateDaily", "Late fee per extra day ($)", { inputMode: "decimal" })}

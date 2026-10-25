@@ -10,6 +10,8 @@ export type Vehicle = {
   late_fee_cents: number; late_daily_cents: number; seats: number | null;
   transmission: string | null; fuel: string | null; description: string | null;
   photo_url: string | null; rate_table: string | null; active: number; rate_confirmed: number; created_at: string;
+  /** Extra driver fee per driver, per rental day. */
+  driver_fee_cents: number;
 };
 
 export type Customer = {
@@ -30,6 +32,8 @@ export type Booking = {
   deposit_refunded_cents: number | null; deposit_deducted_cents: number | null; final_paid_cents: number | null;
   actual_return_at: string | null; notes: string | null; created_at: string;
   refunded_cents: number | null; refund_id: string | null; refunded_at: string | null;
+  /** Extra driver charge for this reservation, already included in total_cents. */
+  driver_fee_cents: number;
 };
 
 export type Agreement = {

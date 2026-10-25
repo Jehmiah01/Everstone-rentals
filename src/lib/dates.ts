@@ -133,6 +133,14 @@ export function priceFromTable(days: number, table: number[]) {
   return { days, weeks, rem, total_cents: weeks * weekly + remCost, breakdown: parts.join(" + ") };
 }
 
+/** Extra driver charge: every listed driver, every rental day. Plain wording, safe for the PDF font. */
+export function extraDriverCharge(drivers: number, days: number, feePerDayCents: number): { cents: number; line: string } {
+  const cents = drivers > 0 && days > 0 && feePerDayCents > 0 ? drivers * days * feePerDayCents : 0;
+  if (cents === 0) return { cents: 0, line: "" };
+  const who = drivers === 1 ? "1 extra driver" : `${drivers} extra drivers`;
+  return { cents, line: `${who} for ${days} day${days === 1 ? "" : "s"} at ${fmtMoney(feePerDayCents)} a day (${fmtMoney(cents)})` };
+}
+
 export function priceVehicle(days: number, v: { rateTable: number[] | null; dailyRateCents: number; weeklyRateCents: number }) {
   return v.rateTable ? priceFromTable(days, v.rateTable) : priceRental(days, v.dailyRateCents, v.weeklyRateCents);
 }

@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 
 import { LICENSE_ATTESTATION } from "@/lib/agreements";
 import { createBooking } from "@/lib/api/booking.functions";
-import { addDays, ageOn, diffDays, eachDay, fmtMoney, fmtTime12, isValidDay, parseDay, prettyDay, priceVehicle } from "@/lib/dates";
+import { addDays, ageOn, diffDays, eachDay, extraDriverCharge, fmtMoney, fmtTime12, isValidDay, parseDay, prettyDay, priceVehicle } from "@/lib/dates";
 import type { PublicVehicle } from "@/lib/types";
 
 import { CarPhoto, vehicleName } from "../site/fleet";
@@ -73,6 +73,8 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
   const oneDayCents = table ? (table[0] ?? vehicle.dailyRateCents) : vehicle.dailyRateCents;
   const weekCents = table ? (table[6] ?? vehicle.weeklyRateCents) : vehicle.weeklyRateCents;
   const savings = price ? days * oneDayCents - price.total_cents : 0;
+  const driverFee = extraDriverCharge(drivers.length, days, vehicle.driverFeeCents);
+  const grandTotal = price ? price.total_cents + driverFee.cents + vehicle.depositCents : 0;
 
   const errors: Partial<Record<keyof FormState, string>> = {};
   if (!isValidDay(f.pickupDate) || f.pickupDate < from) errors.pickupDate = "Pick a date from today on";
@@ -201,15 +203,24 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
             </div>
 
             <div className="mt-4 border-t border-line pt-4">
-              {price && vehicle.depositCents > 0 ? (
+              {price && (vehicle.depositCents > 0 || driverFee.cents > 0) ? (
                 <dl className="mb-3 space-y-2 text-sm">
                   <div className="flex justify-between gap-4"><dt className="text-subtle">Rental</dt><dd className="font-mono">{fmtMoney(price.total_cents)}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="text-subtle">Deposit</dt><dd className="font-mono">{fmtMoney(vehicle.depositCents)}</dd></div>
+                  {driverFee.cents > 0 ? (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-subtle">
+                        {drivers.length === 1 ? "Extra driver" : `${drivers.length} extra drivers`}
+                        <span className="block text-xs">{fmtMoney(vehicle.driverFeeCents)} a day each, {days} day{days === 1 ? "" : "s"}</span>
+                      </dt>
+                      <dd className="font-mono">{fmtMoney(driverFee.cents)}</dd>
+                    </div>
+                  ) : null}
+                  {vehicle.depositCents > 0 ? <div className="flex justify-between gap-4"><dt className="text-subtle">Deposit</dt><dd className="font-mono">{fmtMoney(vehicle.depositCents)}</dd></div> : null}
                 </dl>
               ) : null}
               <div className="flex items-baseline justify-between gap-4">
                 <span className="text-base font-medium">Total</span>
-                <span className="font-mono text-2xl font-medium tracking-tight">{price ? fmtMoney(price.total_cents + vehicle.depositCents) : "-"}</span>
+                <span className="font-mono text-2xl font-medium tracking-tight">{price ? fmtMoney(grandTotal) : "-"}</span>
               </div>
               {price && price.weeks > 0 && price.rem > 0 ? <p className="mt-1 text-right text-xs text-subtle">{price.breakdown}</p> : null}
               {price && savings > 0 ? <p className="mt-2 text-sm font-medium text-ok">You save {fmtMoney(savings)} compared with paying {fmtMoney(oneDayCents)} a day.</p> : null}
@@ -327,6 +338,7 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
           <legend><SectionTitle>Other drivers</SectionTitle></legend>
           <p className="leading-relaxed text-subtle">
             Only you and the people you list here may drive the car. Each one must be 18 or older with a valid physical license, and does the same quick ID check before driving.
+            {vehicle.driverFeeCents > 0 ? ` Each extra driver is ${fmtMoney(vehicle.driverFeeCents)} a day.` : ""}
           </p>
           {drivers.map((d, i) => (
             <div key={d.key} className="space-y-5 border border-line bg-surface p-5">
