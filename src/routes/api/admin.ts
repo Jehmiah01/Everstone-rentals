@@ -30,7 +30,7 @@ function toAdminVehicle(v: Vehicle): AdminVehicle {
     depositCents: v.deposit_cents, lateFeeCents: v.late_fee_cents, lateDailyCents: v.late_daily_cents, seats: v.seats,
     transmission: v.transmission, fuel: v.fuel, description: v.description, photoUrl: v.photo_url,
     active: v.active === 1, rateConfirmed: v.rate_confirmed === 1, rateTable: parseRateTable(v.rate_table),
-    driverFeeCents: v.driver_fee_cents ?? 0,
+    driverFeeCents: v.driver_fee_cents ?? 0, driverFeeCapCents: v.driver_fee_cap_cents ?? 0,
   };
 }
 
@@ -136,6 +136,7 @@ const vehicleSchema = z.object({
   photoUrl: z.string().trim().max(300).optional(),
   rateTable: z.array(cents).length(7).optional(),
   driverFeeCents: cents.optional(),
+  driverFeeCapCents: cents.optional(),
   active: z.boolean(),
 });
 
@@ -382,12 +383,12 @@ export const Route = createFileRoute("/api/admin")({
                 v.year, v.make, v.model, v.color ?? null, v.vin?.toUpperCase() || null, v.plate?.toUpperCase() || null, v.ownerName ?? null,
                 v.dailyRateCents, v.weeklyRateCents, v.depositCents, v.lateFeeCents, v.lateDailyCents, v.seats ?? 5,
                 v.transmission ?? "Automatic", v.fuel ?? "Gasoline", v.description ?? null, v.photoUrl || null, v.active ? 1 : 0,
-                v.rateTable ? JSON.stringify(v.rateTable) : null, v.driverFeeCents ?? 1000,
+                v.rateTable ? JSON.stringify(v.rateTable) : null, v.driverFeeCents ?? 1000, v.driverFeeCapCents ?? 5000,
               ];
               if (v.id) {
                 await db()
                   .prepare(
-                    "UPDATE vehicles SET year = ?1, make = ?2, model = ?3, color = ?4, vin = ?5, plate = ?6, owner_name = ?7, daily_rate_cents = ?8, weekly_rate_cents = ?9, deposit_cents = ?10, late_fee_cents = ?11, late_daily_cents = ?12, seats = ?13, transmission = ?14, fuel = ?15, description = ?16, photo_url = ?17, active = ?18, rate_table = ?19, driver_fee_cents = ?20, rate_confirmed = 1 WHERE id = ?21",
+                    "UPDATE vehicles SET year = ?1, make = ?2, model = ?3, color = ?4, vin = ?5, plate = ?6, owner_name = ?7, daily_rate_cents = ?8, weekly_rate_cents = ?9, deposit_cents = ?10, late_fee_cents = ?11, late_daily_cents = ?12, seats = ?13, transmission = ?14, fuel = ?15, description = ?16, photo_url = ?17, active = ?18, rate_table = ?19, driver_fee_cents = ?20, driver_fee_cap_cents = ?21, rate_confirmed = 1 WHERE id = ?22",
                   )
                   .bind(...values, v.id)
                   .run();
@@ -397,7 +398,7 @@ export const Route = createFileRoute("/api/admin")({
               const slug = await uniqueSlug(`${v.make}-${v.model}`);
               await db()
                 .prepare(
-                  "INSERT INTO vehicles (year, make, model, color, vin, plate, owner_name, daily_rate_cents, weekly_rate_cents, deposit_cents, late_fee_cents, late_daily_cents, seats, transmission, fuel, description, photo_url, active, rate_table, driver_fee_cents, id, slug, rate_confirmed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 1)",
+                  "INSERT INTO vehicles (year, make, model, color, vin, plate, owner_name, daily_rate_cents, weekly_rate_cents, deposit_cents, late_fee_cents, late_daily_cents, seats, transmission, fuel, description, photo_url, active, rate_table, driver_fee_cents, driver_fee_cap_cents, id, slug, rate_confirmed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, 1)",
                 )
                 .bind(...values, id, slug)
                 .run();

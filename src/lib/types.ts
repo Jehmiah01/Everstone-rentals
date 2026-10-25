@@ -9,6 +9,8 @@ export type PublicVehicle = {
   rateTable: number[] | null;
   /** Extra driver fee per driver, per rental day. */
   driverFeeCents: number;
+  /** Most one extra driver can cost per rental (0 = no cap). */
+  driverFeeCapCents: number;
 };
 
 export type HomeData = {
@@ -98,7 +100,7 @@ export type AdminVehicle = {
   plate: string | null; ownerName: string | null; dailyRateCents: number; weeklyRateCents: number; depositCents: number;
   lateFeeCents: number; lateDailyCents: number; seats: number | null; transmission: string | null; fuel: string | null;
   description: string | null; photoUrl: string | null; active: boolean; rateConfirmed: boolean; rateTable: number[] | null;
-  driverFeeCents: number;
+  driverFeeCents: number; driverFeeCapCents: number;
 };
 
 export type AdminData = {

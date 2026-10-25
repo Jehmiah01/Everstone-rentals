@@ -12,6 +12,8 @@ export type Vehicle = {
   photo_url: string | null; rate_table: string | null; active: number; rate_confirmed: number; created_at: string;
   /** Extra driver fee per driver, per rental day. */
   driver_fee_cents: number;
+  /** Most one extra driver can cost per rental (0 = no cap). */
+  driver_fee_cap_cents: number;
 };
 
 export type Customer = {

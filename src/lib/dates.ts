@@ -133,12 +133,26 @@ export function priceFromTable(days: number, table: number[]) {
   return { days, weeks, rem, total_cents: weeks * weekly + remCost, breakdown: parts.join(" + ") };
 }
 
-/** Extra driver charge: every listed driver, every rental day. Plain wording, safe for the PDF font. */
-export function extraDriverCharge(drivers: number, days: number, feePerDayCents: number): { cents: number; line: string } {
-  const cents = drivers > 0 && days > 0 && feePerDayCents > 0 ? drivers * days * feePerDayCents : 0;
-  if (cents === 0) return { cents: 0, line: "" };
+/**
+ * Extra driver charge: every listed driver, every rental day, with each driver
+ * capped at `capPerDriverCents` per rental (0 = no cap). Plain wording, safe for the PDF font.
+ */
+export function extraDriverCharge(
+  drivers: number,
+  days: number,
+  feePerDayCents: number,
+  capPerDriverCents = 0,
+): { cents: number; perDriverCents: number; capped: boolean; line: string } {
+  const uncapped = days > 0 && feePerDayCents > 0 ? days * feePerDayCents : 0;
+  const capped = capPerDriverCents > 0 && uncapped > capPerDriverCents;
+  const perDriverCents = capped ? capPerDriverCents : uncapped;
+  const cents = drivers > 0 ? drivers * perDriverCents : 0;
+  if (cents === 0) return { cents: 0, perDriverCents, capped, line: "" };
   const who = drivers === 1 ? "1 extra driver" : `${drivers} extra drivers`;
-  return { cents, line: `${who} for ${days} day${days === 1 ? "" : "s"} at ${fmtMoney(feePerDayCents)} a day (${fmtMoney(cents)})` };
+  const rate = capped
+    ? `at ${fmtMoney(feePerDayCents)} a day, capped at ${fmtMoney(capPerDriverCents)} per driver`
+    : `at ${fmtMoney(feePerDayCents)} a day`;
+  return { cents, perDriverCents, capped, line: `${who} for ${days} day${days === 1 ? "" : "s"} ${rate} (${fmtMoney(cents)})` };
 }
 
 export function priceVehicle(days: number, v: { rateTable: number[] | null; dailyRateCents: number; weeklyRateCents: number }) {

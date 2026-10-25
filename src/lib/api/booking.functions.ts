@@ -101,7 +101,7 @@ export const createBooking = createServerFn({ method: "POST" })
     }
 
     const price = priceVehicle(days, { rateTable: parseRateTable(vehicle.rate_table), dailyRateCents: vehicle.daily_rate_cents, weeklyRateCents: vehicle.weekly_rate_cents });
-    const driverFee = extraDriverCharge(drivers.length, days, vehicle.driver_fee_cents ?? 0);
+    const driverFee = extraDriverCharge(drivers.length, days, vehicle.driver_fee_cents ?? 0, vehicle.driver_fee_cap_cents ?? 0);
     const totalCents = price.total_cents + driverFee.cents;
     const breakdown = driverFee.cents > 0 ? `${price.breakdown} + ${driverFee.line}` : price.breakdown;
     const verified = await findVerifiedCustomer(data.email, data.dlNumber);

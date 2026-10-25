@@ -24,6 +24,7 @@ export function toPublicVehicle(v: Vehicle): PublicVehicle {
     rateConfirmed: v.rate_confirmed === 1,
     rateTable: parseRateTable(v.rate_table),
     driverFeeCents: v.driver_fee_cents ?? 0,
+    driverFeeCapCents: v.driver_fee_cap_cents ?? 0,
   };
 }
 

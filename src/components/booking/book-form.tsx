@@ -73,7 +73,7 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
   const oneDayCents = table ? (table[0] ?? vehicle.dailyRateCents) : vehicle.dailyRateCents;
   const weekCents = table ? (table[6] ?? vehicle.weeklyRateCents) : vehicle.weeklyRateCents;
   const savings = price ? days * oneDayCents - price.total_cents : 0;
-  const driverFee = extraDriverCharge(drivers.length, days, vehicle.driverFeeCents);
+  const driverFee = extraDriverCharge(drivers.length, days, vehicle.driverFeeCents, vehicle.driverFeeCapCents);
   const grandTotal = price ? price.total_cents + driverFee.cents + vehicle.depositCents : 0;
 
   const errors: Partial<Record<keyof FormState, string>> = {};
@@ -210,7 +210,11 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
                     <div className="flex justify-between gap-4">
                       <dt className="text-subtle">
                         {drivers.length === 1 ? "Extra driver" : `${drivers.length} extra drivers`}
-                        <span className="block text-xs">{fmtMoney(vehicle.driverFeeCents)} a day each, {days} day{days === 1 ? "" : "s"}</span>
+                        <span className="block text-xs">
+                          {driverFee.capped
+                            ? `${fmtMoney(driverFee.perDriverCents)} each (the most per rental)`
+                            : `${fmtMoney(vehicle.driverFeeCents)} a day each, ${days} day${days === 1 ? "" : "s"}`}
+                        </span>
                       </dt>
                       <dd className="font-mono">{fmtMoney(driverFee.cents)}</dd>
                     </div>
@@ -338,7 +342,9 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
           <legend><SectionTitle>Other drivers</SectionTitle></legend>
           <p className="leading-relaxed text-subtle">
             Only you and the people you list here may drive the car. Each one must be 18 or older with a valid physical license, and does the same quick ID check before driving.
-            {vehicle.driverFeeCents > 0 ? ` Each extra driver is ${fmtMoney(vehicle.driverFeeCents)} a day.` : ""}
+            {vehicle.driverFeeCents > 0
+              ? ` Each extra driver is ${fmtMoney(vehicle.driverFeeCents)} a day${vehicle.driverFeeCapCents > 0 ? `, and never more than ${fmtMoney(vehicle.driverFeeCapCents)} per rental` : ""}.`
+              : ""}
           </p>
           {drivers.map((d, i) => (
             <div key={d.key} className="space-y-5 border border-line bg-surface p-5">
