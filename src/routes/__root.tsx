@@ -85,7 +85,7 @@ function NotFoundComponent() {
         <h1 className="mt-3 text-3xl font-semibold tracking-tight">This page doesn't exist.</h1>
         <p className="mt-3 text-subtle">The link may be old or mistyped.</p>
         <Link to="/" className="mt-6 inline-flex h-11 items-center bg-cobalt px-5 font-medium text-surface hover:bg-cobalt-deep">
-          Back to Everstone Rentals
+          Back to Providence Rentals
         </Link>
       </div>
     </div>

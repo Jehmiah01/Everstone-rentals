@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AdminApp } from "@/components/admin/admin-app";
 
 export const Route = createFileRoute("/admin")({
-  head: () => ({ meta: [{ title: "Owner dashboard | Everstone Rentals" }, { name: "robots", content: "noindex, nofollow" }] }),
+  head: () => ({ meta: [{ title: "Owner dashboard | Providence Rentals" }, { name: "robots", content: "noindex, nofollow" }] }),
   component: AdminRoute,
 });
 

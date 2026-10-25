@@ -33,7 +33,7 @@ export function ReservationError() {
         Use the link from your confirmation email; it includes a private code that opens your reservation. If the problem continues, reply to that email.
       </p>
       <a href="/" className="mt-6 inline-flex h-11 items-center bg-cobalt px-5 font-medium text-surface hover:bg-cobalt-deep">
-        Back to Everstone Rentals
+        Back to Providence Rentals
       </a>
     </div>
   );

@@ -10,7 +10,7 @@ export function secret(name: string): string | undefined {
 
 export const COMPANY = {
   name: "Everstone Consulting Group LLC",
-  brand: "Everstone Rentals",
+  brand: "Providence Rentals",
   address: "100 West Road, Suite 300, Towson, Maryland 21204",
   city: "Baltimore, Maryland",
 };
@@ -23,5 +23,5 @@ export function businessEmail(): string {
 }
 
 export function mailFrom(): string {
-  return secret("MAIL_FROM") ?? "Everstone Rentals <onboarding@resend.dev>";
+  return secret("MAIL_FROM") ?? "Providence Rentals <onboarding@resend.dev>";
 }

@@ -1,16 +1,17 @@
 @import "tailwindcss";
 
-/* Everstone Rentals brand layer (see design-brief.md). Routes use these
- * tokens as Tailwind utilities (bg-ground, text-ink, bg-cobalt, border-line). */
+/* Providence Rentals brand layer (see design-brief.md). Routes use these
+ * tokens as Tailwind utilities (bg-ground, text-ink, bg-cobalt, border-line).
+ * The "cobalt" tokens hold the brand color, which is red since 2026-10-24. */
 @theme {
   --color-ground: #F3F4F1;
   --color-surface: #FFFFFF;
   --color-ink: #15181D;
   --color-subtle: #5B6270;
   --color-line: #D8DBD5;
-  --color-cobalt: #1F3EAE;
-  --color-cobalt-deep: #162C7E;
-  --color-cobalt-tint: #E6EAF7;
+  --color-cobalt: #C8102E;
+  --color-cobalt-deep: #9B0D23;
+  --color-cobalt-tint: #FBE8EB;
   --color-danger: #A3261B;
   --color-danger-tint: #F8E7E5;
   --color-ok: #1E6B3A;

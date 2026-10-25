@@ -27,7 +27,7 @@ export const Route = createFileRoute("/booking/$id/")({
   }),
   loaderDeps: ({ search }) => ({ token: search.token }),
   loader: ({ params, deps }) => getCustomerBooking({ data: { id: params.id, token: deps.token } }),
-  head: () => ({ meta: [{ title: "Your reservation | Everstone Rentals" }, { name: "robots", content: "noindex" }] }),
+  head: () => ({ meta: [{ title: "Your reservation | Providence Rentals" }, { name: "robots", content: "noindex" }] }),
   errorComponent: () => (
     <Page>
       <ReservationError />

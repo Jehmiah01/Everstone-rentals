@@ -24,7 +24,7 @@ export const Route = createFileRoute("/booking/$id/sign")({
     const [booking, docs] = await Promise.all([getCustomerBooking(input), getAgreementDocs(input)]);
     return { booking, docs };
   },
-  head: () => ({ meta: [{ title: "Sign your rental agreements | Everstone Rentals" }, { name: "robots", content: "noindex" }] }),
+  head: () => ({ meta: [{ title: "Sign your rental agreements | Providence Rentals" }, { name: "robots", content: "noindex" }] }),
   errorComponent: () => (
     <Page>
       <ReservationError />

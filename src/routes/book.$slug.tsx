@@ -15,7 +15,7 @@ export const Route = createFileRoute("/book/$slug")({
     return data;
   },
   head: ({ loaderData }) => ({
-    meta: [{ title: loaderData ? `Reserve the ${loaderData.vehicle.year} ${loaderData.vehicle.make} ${loaderData.vehicle.model} | Everstone Rentals` : "Reserve | Everstone Rentals" }],
+    meta: [{ title: loaderData ? `Reserve the ${loaderData.vehicle.year} ${loaderData.vehicle.make} ${loaderData.vehicle.model} | Providence Rentals` : "Reserve | Providence Rentals" }],
   }),
   component: BookRoute,
 });

@@ -60,7 +60,7 @@ export async function sendEmail(opts: {
 export function emailShell(title: string, bodyHtml: string): string {
   return `<!doctype html><html><body style="margin:0;background:#F3F4F1;font-family:Helvetica,Arial,sans-serif;color:#15181D">
   <div style="max-width:560px;margin:0 auto;padding:32px 20px">
-    <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5B6270;margin-bottom:12px">Everstone Rentals</div>
+    <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5B6270;margin-bottom:12px">Providence Rentals</div>
     <h1 style="font-size:22px;margin:0 0 16px;letter-spacing:-.01em">${title}</h1>
     <div style="background:#FFFFFF;border:1px solid #D8DBD5;padding:20px;font-size:15px;line-height:1.55">${bodyHtml}</div>
     <p style="font-size:12px;color:#5B6270;margin-top:20px">Everstone Consulting Group LLC, 100 West Road, Suite 300, Towson, Maryland 21204</p>

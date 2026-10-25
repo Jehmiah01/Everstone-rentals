@@ -128,7 +128,7 @@ export async function sendBookingReceived(b: BookingBundle, origin: string) {
     html: emailShell(
       `Thanks, ${b.customer.full_name.split(" ")[0] ?? ""}. Your request is in.`,
       `${summaryHtml(b)}<p>Next step: review and sign both rental agreements on your phone or computer, then pay through Square.</p>
-       <p><a href="${link}" style="display:inline-block;background:#1F3EAE;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Open your reservation</a></p>
+       <p><a href="${link}" style="display:inline-block;background:#C8102E;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Open your reservation</a></p>
        <p style="font-size:13px;color:#5B6270">Keep this link; it is your private access to this reservation.</p>`,
     ),
   });
@@ -182,7 +182,7 @@ export async function sendApproval(b: BookingBundle, origin: string) {
       "You're approved. Here is where to pick up.",
       `${summaryHtml(b)}<p style="font-size:17px"><strong>Pickup address:</strong><br>${PICKUP_ADDRESS}</p>
        <p>Bring the physical driver's license you entered. Before you get the keys, upload a photo of your license and a selfie holding it from your reservation page if you have not already.</p>
-       <p><a href="${link}" style="display:inline-block;background:#1F3EAE;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Open your reservation</a></p>`,
+       <p><a href="${link}" style="display:inline-block;background:#C8102E;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Open your reservation</a></p>`,
     ),
   });
   await db().prepare("UPDATE bookings SET address_sent_at = ?1 WHERE id = ?2").bind(new Date().toISOString(), b.booking.id).run();
@@ -196,7 +196,7 @@ export async function sendAgreementReminder(b: BookingBundle, origin: string) {
     subject: `Reminder: sign your rental agreements for ${b.booking.id}`,
     html: emailShell(
       "Your agreements are waiting for a signature",
-      `${summaryHtml(b)}<p><a href="${link}" style="display:inline-block;background:#1F3EAE;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Review and sign</a></p>`,
+      `${summaryHtml(b)}<p><a href="${link}" style="display:inline-block;background:#C8102E;color:#fff;padding:12px 18px;text-decoration:none;font-weight:600">Review and sign</a></p>`,
     ),
   });
   await db()
