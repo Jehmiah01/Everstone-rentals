@@ -19,7 +19,7 @@ function Index() {
       <SiteHeader />
       <main>
         <HomeHero />
-        <FleetSection vehicles={data.vehicles} />
+        <FleetSection vehicles={data.vehicles} unavailable={data.unavailable} today={data.from} to={data.to} />
         <AvailabilitySection vehicles={data.vehicles} unavailable={data.unavailable} from={data.from} to={data.to} />
         <HowItWorks />
         <Requirements />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { fmtMoney } from "@/lib/dates";
+import { firstFreeDay, fmtMoney, shortDay } from "@/lib/dates";
 import type { PublicVehicle } from "@/lib/types";
 
 export function vehicleName(v: PublicVehicle) {
@@ -45,10 +45,10 @@ export function CarPhoto({ vehicle, className = "" }: { vehicle: PublicVehicle; 
   );
 }
 
-function ReserveLink({ slug }: { slug: string }) {
+function ReserveLink({ slug, start }: { slug: string; start?: string | null }) {
   return (
     <a
-      href={`/book/${slug}`}
+      href={start ? `/book/${slug}?start=${start}` : `/book/${slug}`}
       className="group relative inline-flex min-h-11 items-center font-medium text-ink"
     >
       Reserve
@@ -60,8 +60,11 @@ function ReserveLink({ slug }: { slug: string }) {
   );
 }
 
-function FleetCard({ v, wide }: { v: PublicVehicle; wide: boolean }) {
+function FleetCard({ v, wide, unavailable, today, to }: { v: PublicVehicle; wide: boolean; unavailable: string[]; today: string; to: string }) {
   const specs = [v.color, v.seats ? `${v.seats} seats` : null, v.transmission, v.fuel].filter(Boolean).join(", ");
+  // "Out" means booked or blocked today; the label then says when it's next free.
+  const out = unavailable.includes(today);
+  const back = out ? firstFreeDay(unavailable, today, to) : null;
   return (
     <article className={`flex flex-col border border-line bg-surface ${wide ? "md:col-span-2 md:row-span-2" : ""}`}>
       <CarPhoto vehicle={v} className={`w-full ${wide ? "aspect-[16/10]" : "aspect-[16/9]"}`} />
@@ -72,17 +75,25 @@ function FleetCard({ v, wide }: { v: PublicVehicle; wide: boolean }) {
             {fmtMoney(v.dailyRateCents)}/day <span className="text-subtle">or {fmtMoney(v.weeklyRateCents)}/week</span>
           </p>
         </div>
+        {out ? (
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="bg-warn-tint px-2 py-0.5 font-medium text-warn">Out right now</span>
+            <span className="text-subtle">{back ? `Available from ${shortDay(back)}` : "Not taking bookings right now"}</span>
+          </p>
+        ) : null}
         {specs ? <p className="text-sm text-subtle">{specs}</p> : null}
         {v.description ? <p className="max-w-[60ch] leading-relaxed text-subtle">{v.description}</p> : null}
         <div className="mt-auto pt-2">
-          <ReserveLink slug={v.slug} />
+          <ReserveLink slug={v.slug} start={back} />
         </div>
       </div>
     </article>
   );
 }
 
-export function FleetSection({ vehicles }: { vehicles: PublicVehicle[] }) {
+export function FleetSection({ vehicles, unavailable, today, to }: {
+  vehicles: PublicVehicle[]; unavailable: Record<string, string[]>; today: string; to: string;
+}) {
   return (
     <section id="fleet" className="scroll-mt-20 border-b border-line">
       <div className="mx-auto max-w-6xl px-5 py-16 md:py-24">
@@ -98,7 +109,7 @@ export function FleetSection({ vehicles }: { vehicles: PublicVehicle[] }) {
         ) : (
           <div className="mt-10 grid gap-5 md:grid-cols-3">
             {vehicles.map((v, i) => (
-              <FleetCard key={v.id} v={v} wide={i === 0 && vehicles.length > 1} />
+              <FleetCard key={v.id} v={v} wide={i === 0 && vehicles.length > 1} unavailable={unavailable[v.id] ?? []} today={today} to={to} />
             ))}
           </div>
         )}

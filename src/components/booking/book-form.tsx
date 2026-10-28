@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 
 import { LICENSE_ATTESTATION } from "@/lib/agreements";
 import { createBooking } from "@/lib/api/booking.functions";
-import { addDays, ageOn, diffDays, eachDay, extraDriverCharge, fmtMoney, fmtTime12, isValidDay, parseDay, prettyDay, priceVehicle } from "@/lib/dates";
+import { addDays, ageOn, diffDays, eachDay, extraDriverCharge, firstFreeDay, fmtMoney, fmtTime12, isValidDay, parseDay, prettyDay, priceVehicle } from "@/lib/dates";
 import type { PublicVehicle } from "@/lib/types";
 
 import { CarPhoto, vehicleName } from "../site/fleet";
@@ -47,7 +47,9 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
 }) {
   const navigate = useNavigate();
   const blocked = useMemo(() => new Set(unavailable), [unavailable]);
-  const firstPickup = start && start >= from && start <= to ? start : from;
+  const outToday = blocked.has(from);
+  const firstFree = firstFreeDay(blocked, from, to);
+  const firstPickup = start && start >= from && start <= to ? start : (firstFree ?? from);
   const [f, setF] = useState<FormState>({
     pickupDate: firstPickup, returnDate: addDays(firstPickup, 7), pickupTime: "10:00", returnTime: "10:00",
     fullName: "", email: "", phone: "", address: "", city: "", state: "MD", zip: "",
@@ -289,6 +291,13 @@ export function BookForm({ vehicle, unavailable, from, to, start }: {
         <div>
           <h1 className="text-3xl font-semibold tracking-tighter md:text-4xl">Reserve the {vehicle.make} {vehicle.model}</h1>
           <p className="mt-3 text-subtle">Fill this in once and we'll add it to your rental paperwork for you.</p>
+          {outToday ? (
+            <p className="mt-4 border border-warn bg-warn-tint p-4 text-sm text-warn">
+              {firstFree
+                ? `This car is out right now. The earliest pickup is ${prettyDay(firstFree)}.`
+                : "This car is out right now and isn't taking bookings."}
+            </p>
+          ) : null}
         </div>
 
         <fieldset id="your-dates" className="scroll-mt-24 space-y-5">

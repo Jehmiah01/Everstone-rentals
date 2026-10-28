@@ -52,6 +52,13 @@ export function prettyDay(day: string): string {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 }
 
+/** First day from `from` through `to` that is not booked or blocked, or null if there is none. */
+export function firstFreeDay(blocked: Iterable<string>, from: string, to: string): string | null {
+  const set = blocked instanceof Set ? (blocked as Set<string>) : new Set(blocked);
+  for (let d = from; d <= to; d = addDays(d, 1)) if (!set.has(d)) return d;
+  return null;
+}
+
 export function shortDay(day: string): string {
   const d = new Date(parseDay(day));
   return `${MONTHS[d.getUTCMonth()]?.slice(0, 3)} ${d.getUTCDate()}`;
