@@ -102,3 +102,5 @@ Open question for owner: pickup address is currently emailed when the owner appr
 - 2026-10-25 Extra driver fee cap: $50 per driver per rental (owner chose it). Migration 0008 adds vehicles.driver_fee_cap_cents (default 5000, 0 = no cap), editable per car in the dashboard ("Most per extra driver, per rental"). So $10/day for up to 5 days, then $50 flat per driver.
 
 - 2026-10-28 "Out right now" label: a car booked or blocked today shows an "Out right now · Available from <date>" badge on its home-page card, its Reserve link opens the booking form at the next free day, and the booking form explains the earliest pickup. Driven entirely by reservations and Blocked dates in the dashboard. The Higgsfield sandbox reset again and the deploy key was lost; a new one was generated (claude-everstone-deploy-20261028).
+
+- 2026-10-29 Domain rentprovidencemd.com bought by owner in Cloudflare (same account). Added to wrangler.jsonc routes as custom domains (apex + www) alongside everstonerentals.com, which keeps working (Square webhook and Resend sending domain still use everstonerentals.com).
