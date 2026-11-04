@@ -103,7 +103,21 @@ export type AdminVehicle = {
   driverFeeCents: number; driverFeeCapCents: number;
 };
 
+export type AdminMe = { role: "owner" | "staff"; name: string };
+
+export type AdminStaff = {
+  id: string; name: string; email: string; active: boolean; locked: boolean; lastLoginAt: string | null; createdAt: string;
+};
+
+export type AdminActivity = { id: string; actor: string; action: string; target: string | null; createdAt: string };
+
 export type AdminData = {
+  /** Who is signed in. Team members get a limited dashboard. */
+  me: AdminMe;
+  /** Owner only; empty for team members. */
+  staff: AdminStaff[];
+  /** Owner only; empty for team members. */
+  activity: AdminActivity[];
   bookings: AdminBooking[];
   vehicles: AdminVehicle[];
   blackouts: { id: string; vehicleId: string; startDate: string; endDate: string; reason: string | null }[];

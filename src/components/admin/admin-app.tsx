@@ -1,12 +1,25 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { fmtMoney, fmtTime12, formatEt, prettyDay, shortDay } from "@/lib/dates";
-import type { AdminBooking, AdminData, AdminDriver, AdminVehicle } from "@/lib/types";
+import type { AdminBooking, AdminData, AdminDriver, AdminMe, AdminStaff, AdminVehicle } from "@/lib/types";
 
 import { Checkbox, ContinueButton, Field, inputClass } from "../booking/form";
 import { LogoMark } from "../site/chrome";
 
 type Notice = { kind: "ok" | "error"; text: string } | null;
+
+/** Who is signed in. Team members see a limited dashboard; the server enforces the same limits. */
+const MeContext = createContext<AdminMe>({ role: "owner", name: "Owner" });
+
+const when = (s: string) => formatEt(s.includes("T") ? s : `${s.replace(" ", "T")}Z`);
+
+/** A random password like "k7Pq-m2Xs-9vTw" (no look-alike characters). */
+function generatePassword(): string {
+  const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]);
+  return [chars.slice(0, 4), chars.slice(4, 8), chars.slice(8, 12)].map((g) => g.join("")).join("-");
+}
 type Run = (body: Record<string, unknown>, success?: string) => Promise<boolean>;
 
 async function post<T = { ok: boolean; emailed?: boolean; error?: string }>(body: unknown): Promise<T> {
@@ -154,7 +167,7 @@ export function AdminApp() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [configured, setConfigured] = useState(true);
   const [data, setData] = useState<AdminData | null>(null);
-  const [tab, setTab] = useState<"reservations" | "cars" | "blocked" | "emails">("reservations");
+  const [tab, setTab] = useState<"reservations" | "cars" | "blocked" | "emails" | "team">("reservations");
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
 
@@ -199,12 +212,27 @@ export function AdminApp() {
   if (authed === null) return <p className="mx-auto max-w-6xl px-5 py-20 text-subtle">Loading the dashboard...</p>;
   if (!authed) return <Login configured={configured} onDone={load} />;
 
+  const me: AdminMe = data?.me ?? { role: "owner", name: "Owner" };
+  const owner = me.role === "owner";
+  const tabs = ([
+    ["reservations", "Reservations"],
+    ["cars", "Cars"],
+    ["blocked", "Blocked dates"],
+    ["emails", "Email log"],
+    ["team", "Team"],
+  ] as const).filter(([id]) => owner || (id !== "cars" && id !== "team"));
+  const shownTab = tabs.some(([id]) => id === tab) ? tab : "reservations";
+
   return (
+    <MeContext.Provider value={me}>
     <div className="mx-auto max-w-6xl px-5 py-8 md:py-12">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <LogoMark className="size-8 text-cobalt" />
-          <h1 className="text-2xl font-semibold tracking-tight">Owner dashboard</h1>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{owner ? "Owner dashboard" : "Team dashboard"}</h1>
+            {!owner ? <p className="text-sm text-subtle">Signed in as {me.name}</p> : null}
+          </div>
         </div>
         <SmallButton tone="ghost" onClick={async () => { await post({ action: "logout" }).catch(() => undefined); setAuthed(false); setData(null); }}>
           Log out
@@ -225,47 +253,228 @@ export function AdminApp() {
       ) : null}
 
       <div className="mt-8 flex flex-wrap gap-2 border-b border-line" role="tablist" aria-label="Dashboard sections">
-        {([
-          ["reservations", "Reservations"],
-          ["cars", "Cars"],
-          ["blocked", "Blocked dates"],
-          ["emails", "Email log"],
-        ] as const).map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button
             key={id}
             type="button"
             role="tab"
-            aria-selected={tab === id}
+            aria-selected={shownTab === id}
             onClick={() => setTab(id)}
-            className={`-mb-px min-h-11 border-b-2 px-4 text-sm font-medium ${tab === id ? "border-cobalt text-ink" : "border-transparent text-subtle hover:text-ink"}`}
+            className={`-mb-px min-h-11 border-b-2 px-4 text-sm font-medium ${shownTab === id ? "border-cobalt text-ink" : "border-transparent text-subtle hover:text-ink"}`}
           >
             {label}
           </button>
         ))}
       </div>
 
-      {!data ? null : tab === "reservations" ? (
+      {!data ? null : shownTab === "reservations" ? (
         <Reservations data={data} run={run} busy={busy} />
-      ) : tab === "cars" ? (
+      ) : shownTab === "cars" ? (
         <Cars vehicles={data.vehicles} run={run} busy={busy} reload={load} setNotice={setNotice} />
-      ) : tab === "blocked" ? (
+      ) : shownTab === "blocked" ? (
         <Blocked data={data} run={run} busy={busy} />
+      ) : shownTab === "team" ? (
+        <Team data={data} run={run} busy={busy} />
       ) : (
         <Emails data={data} />
       )}
+    </div>
+    </MeContext.Provider>
+  );
+}
+
+function StaffItem({ s, run, busy }: { s: AdminStaff; run: Run; busy: boolean }) {
+  const [resetting, setResetting] = useState(false);
+  const [pw, setPw] = useState("");
+  const [newPw, setNewPw] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  return (
+    <li className="border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium">{s.name}</span>
+        <span className="flex gap-1.5">
+          {s.active ? <Badge tone="ok">Can sign in</Badge> : <Badge tone="plain">Access off</Badge>}
+          {s.locked ? <Badge tone="danger">Locked 15 min</Badge> : null}
+        </span>
+      </div>
+      <p className="mt-1 text-sm text-subtle">{s.email}</p>
+      <p className="mt-1 text-sm text-subtle">{s.lastLoginAt ? `Last signed in ${when(s.lastLoginAt)}` : "Hasn't signed in yet"}</p>
+      {newPw ? (
+        <p className="mt-3 border border-ok bg-ok-tint p-3 text-sm text-ok">New password for {s.name}: <span className="font-mono">{newPw}</span>. Send it to them; it isn't shown again.</p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <SmallButton tone="ghost" disabled={busy} onClick={() => run({ action: "setStaffActive", staffId: s.id, active: !s.active }, s.active ? `${s.name} can no longer sign in.` : `${s.name} can sign in again.`)}>
+          {s.active ? "Turn off access" : "Turn access back on"}
+        </SmallButton>
+        <SmallButton tone="ghost" disabled={busy} onClick={() => { setResetting((v) => !v); setPw(generatePassword()); }}>
+          {resetting ? "Cancel reset" : "Reset password"}
+        </SmallButton>
+        <SmallButton
+          tone="danger"
+          disabled={busy}
+          onClick={async () => {
+            if (!confirmRemove) {
+              setConfirmRemove(true);
+              return;
+            }
+            setConfirmRemove(false);
+            await run({ action: "removeStaff", staffId: s.id }, `${s.name} was removed.`);
+          }}
+        >
+          {confirmRemove ? `Tap again to remove ${s.name}` : "Remove"}
+        </SmallButton>
+      </div>
+      {resetting ? (
+        <div className="mt-3 space-y-3">
+          <Field id={`pw-${s.id}`} label="New password" hint="At least 10 characters. A random one is filled in for you.">
+            <input id={`pw-${s.id}`} value={pw} onChange={(e) => setPw(e.target.value)} className={`${inputClass} font-mono`} autoComplete="new-password" />
+          </Field>
+          <SmallButton
+            tone="cobalt"
+            disabled={busy || pw.length < 10}
+            onClick={async () => {
+              const ok = await run({ action: "resetStaffPassword", staffId: s.id, password: pw }, `Password reset for ${s.name}.`);
+              if (ok) {
+                setNewPw(pw);
+                setResetting(false);
+              }
+            }}
+          >
+            Save new password
+          </SmallButton>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function Team({ data, run, busy }: { data: AdminData; run: Run; busy: boolean }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState(() => generatePassword());
+  const [shown, setShown] = useState<{ name: string; email: string; password: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const signIn = `${typeof window !== "undefined" ? window.location.origin : ""}/admin?as=team`;
+  const message = shown
+    ? `Hi ${shown.name.split(" ")[0]}, here's your sign-in for the Providence Rentals dashboard.\nSign in at: ${signIn}\nEmail: ${shown.email}\nPassword: ${shown.password}`
+    : "";
+
+  return (
+    <div className="mt-6 grid gap-8 md:grid-cols-2">
+      <section>
+        <h2 className="text-lg font-semibold">Team members</h2>
+        <p className="mt-1 text-sm text-subtle">
+          Team members can handle reservations, ID checks, payment links, pickups, returns and blocked dates. They can't give refunds, change cars or prices, or manage the team.
+        </p>
+        {shown ? (
+          <div className="mt-4 space-y-3 border border-ok bg-ok-tint p-4 text-sm">
+            <p className="font-medium text-ok">{shown.name} is added. Send them this:</p>
+            <p className="whitespace-pre-line text-ink">{message}</p>
+            <SmallButton
+              tone="ink"
+              onClick={async () => {
+                await navigator.clipboard.writeText(message).catch(() => undefined);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 2000);
+              }}
+            >
+              {copied ? "Copied" : "Copy message"}
+            </SmallButton>
+            <p className="text-xs text-subtle">The password isn't shown again after you leave this page. You can always reset it.</p>
+          </div>
+        ) : null}
+        {data.staff.length === 0 ? (
+          <p className="mt-4 border border-line bg-surface p-4 text-sm text-subtle">No team members yet.</p>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {data.staff.map((s) => (
+              <StaffItem key={s.id} s={s} run={run} busy={busy} />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold">Add a team member</h2>
+        <form
+          className="mt-3 space-y-4 border border-line bg-surface p-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const added = { name: name.trim(), email: email.trim().toLowerCase(), password };
+            const ok = await run({ action: "addStaff", ...added }, `${added.name} can now sign in.`);
+            if (ok) {
+              setShown(added);
+              setName("");
+              setEmail("");
+              setPassword(generatePassword());
+            }
+          }}
+        >
+          <Field id="staff-name" label="Name">
+            <input id="staff-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} autoComplete="off" />
+          </Field>
+          <Field id="staff-email" label="Their email" hint="They sign in with this.">
+            <input id="staff-email" type="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} autoComplete="off" />
+          </Field>
+          <Field id="staff-password" label="Password" hint="A random password is filled in. You can type your own (at least 10 characters).">
+            <div className="flex gap-2">
+              <input id="staff-password" value={password} onChange={(e) => setPassword(e.target.value)} className={`${inputClass} font-mono`} autoComplete="new-password" />
+              <SmallButton tone="ghost" onClick={() => setPassword(generatePassword())}>New</SmallButton>
+            </div>
+          </Field>
+          <SmallButton tone="cobalt" type="submit" disabled={busy || name.trim().length < 2 || !email.includes("@") || password.length < 10}>
+            Add team member
+          </SmallButton>
+        </form>
+
+        <h2 className="mt-8 text-lg font-semibold">Recent activity</h2>
+        {data.activity.length === 0 ? (
+          <p className="mt-3 border border-line bg-surface p-4 text-sm text-subtle">Nothing yet. Every change made in the dashboard shows up here, with who made it.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-line border border-line bg-surface text-sm">
+            {data.activity.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-3 py-2">
+                <span>
+                  <span className="font-medium">{a.actor}</span> {a.action}
+                  {a.target ? <span className="text-subtle"> {a.target}</span> : null}
+                </span>
+                <span className="text-xs text-subtle">{when(a.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
 
 function Login({ configured, onDone }: { configured: boolean; onDone: () => Promise<void> }) {
+  const [mode, setMode] = useState<"owner" | "team">(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("as") === "team" ? "team" : "owner",
+  );
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const team = mode === "team";
   return (
     <div className="mx-auto max-w-sm px-5 py-20">
       <LogoMark className="size-10 text-cobalt" />
-      <h1 className="mt-6 text-2xl font-semibold tracking-tight">Owner login</h1>
-      {!configured ? (
+      <h1 className="mt-6 text-2xl font-semibold tracking-tight">{team ? "Team sign-in" : "Owner login"}</h1>
+      <div className="mt-5 grid grid-cols-2 border border-line" role="group" aria-label="Who is signing in">
+        {([["owner", "Owner"], ["team", "Team member"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={mode === id}
+            onClick={() => { setMode(id); setError(null); }}
+            className={`min-h-11 text-sm font-medium ${mode === id ? "bg-ink text-surface" : "bg-surface text-ink hover:bg-ground"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {!configured && !team ? (
         <p className="mt-4 border border-warn bg-warn-tint p-4 text-sm text-warn">
           No admin password is set yet. Add a secret named ADMIN_PASSWORD in the website settings, then relaunch the site.
         </p>
@@ -277,7 +486,7 @@ function Login({ configured, onDone }: { configured: boolean; onDone: () => Prom
           setBusy(true);
           setError(null);
           try {
-            await post({ action: "login", password });
+            await post({ action: "login", password, ...(team ? { email: email.trim() } : {}) });
             await onDone();
           } catch (err) {
             setError(err instanceof Error ? err.message : "Login failed");
@@ -286,10 +495,16 @@ function Login({ configured, onDone }: { configured: boolean; onDone: () => Prom
           }
         }}
       >
+        {team ? (
+          <Field id="admin-email" label="Email">
+            <input id="admin-email" type="email" inputMode="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
+          </Field>
+        ) : null}
         <Field id="admin-password" label="Password" error={error}>
           <input id="admin-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} />
         </Field>
-        <ContinueButton busy={busy} disabled={!password}>Log in</ContinueButton>
+        <ContinueButton busy={busy} disabled={!password || (team && !email.includes("@"))}>Log in</ContinueButton>
+        {team ? <p className="text-sm text-subtle">Forgot your password? Ask the owner to reset it.</p> : null}
       </form>
     </div>
   );
@@ -375,7 +590,8 @@ function Row({ k, children }: { k: string; children: ReactNode }) {
 }
 
 function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: boolean }) {
-  const [repName, setRepName] = useState(b.repName ?? "Jehmiah Johnson");
+  const me = useContext(MeContext);
+  const [repName, setRepName] = useState(b.repName ?? (me.role === "owner" ? "Jehmiah Johnson" : me.name));
   const [reason, setReason] = useState("");
   const [idNotes, setIdNotes] = useState("");
   const [payLink, setPayLink] = useState(b.paymentLink ?? "");
@@ -483,7 +699,10 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
       <section>
         <h3 className="font-semibold">Payment</h3>
         <p className="mt-3 text-sm">{payBadge(b)} {b.paidAt ? <span className="text-subtle">on {formatEt(b.paidAt)}</span> : null}</p>
-        {b.paymentStatus === "paid" ? (
+        {b.paymentStatus === "paid" && me.role !== "owner" ? (
+          <p className="mt-3 text-sm text-subtle">Refunds are handled by the owner.</p>
+        ) : null}
+        {b.paymentStatus === "paid" && me.role === "owner" ? (
           <div className="mt-3 space-y-2">
             <SmallButton
               tone={confirmRefund ? "danger" : "ghost"}

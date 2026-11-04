@@ -4,13 +4,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { BRAND } from "@/lib/brand";
-import { adminConfigured, checkPassword, clearSessionCookie, issueSession, sessionCookie, verifySession } from "@/lib/auth.server";
+import { adminConfigured, checkPassword, clearSessionCookie, getSession, hashPassword, issueSession, sessionCookie, verifyStaffPassword, type Session, type StaffRow } from "@/lib/auth.server";
 import { driverPath, driversNotCleared, loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendApproval, sendSignedAgreements } from "@/lib/bookings.server";
 import { isValidDay, parseRateTable } from "@/lib/dates";
 import { db, getBookingBundle, newId, storage, type AdditionalDriver, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
 import { refundPayment, squareConfigured } from "@/lib/square.server";
-import type { AdminBooking, AdminData, AdminVehicle } from "@/lib/types";
+import type { AdminActivity, AdminBooking, AdminData, AdminMe, AdminStaff, AdminVehicle } from "@/lib/types";
 
 const json = (body: unknown, status = 200, headers?: Record<string, string>) => Response.json(body, { status, headers });
 const fail = (error: string, status = 400) => json({ ok: false, error }, status);
@@ -34,7 +34,7 @@ function toAdminVehicle(v: Vehicle): AdminVehicle {
   };
 }
 
-async function loadAdminData(origin: string): Promise<AdminData> {
+async function loadAdminData(origin: string, session: Session): Promise<AdminData> {
   const rows = (
     await db()
       .prepare(
@@ -100,7 +100,24 @@ async function loadAdminData(origin: string): Promise<AdminData> {
     };
   });
 
+  const owner = session.role === "owner";
+  const me: AdminMe = owner ? { role: "owner", name: "Owner" } : { role: "staff", name: session.name };
+  const staffRows = owner
+    ? (await db().prepare("SELECT * FROM staff ORDER BY created_at ASC").all<StaffRow>()).results
+    : [];
+  const activityRows = owner
+    ? (await db().prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 60").all<{ id: string; actor: string; action: string; target: string | null; created_at: string }>()).results
+    : [];
+  const staff: AdminStaff[] = staffRows.map((s) => ({
+    id: s.id, name: s.name, email: s.email, active: s.active === 1,
+    locked: Boolean(s.locked_until && Date.parse(s.locked_until) > Date.now()), lastLoginAt: s.last_login_at, createdAt: s.created_at,
+  }));
+  const activity: AdminActivity[] = activityRows.map((r) => ({ id: r.id, actor: r.actor, action: r.action, target: r.target, createdAt: r.created_at }));
+
   return {
+    me,
+    staff,
+    activity,
     bookings,
     vehicles: vehicles.map(toAdminVehicle),
     blackouts: blackouts.map((b) => ({ id: b.id, vehicleId: b.vehicle_id, startDate: b.start_date, endDate: b.end_date, reason: b.reason })),
@@ -141,7 +158,7 @@ const vehicleSchema = z.object({
 });
 
 const actionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("login"), password: z.string().min(1).max(200) }),
+  z.object({ action: z.literal("login"), password: z.string().min(1).max(200), email: z.string().trim().toLowerCase().max(200).optional() }),
   z.object({ action: z.literal("logout") }),
   z.object({ action: z.literal("approve"), id: idField, repName: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("setStatus"), id: idField, status: z.enum(["requested", "declined", "cancelled", "completed"]), reason: z.string().trim().max(500).optional() }),
@@ -160,7 +177,84 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("saveVehicle"), vehicle: vehicleSchema }),
   z.object({ action: z.literal("addBlackout"), vehicleId: idField, startDate: day, endDate: day, reason: z.string().trim().max(200).optional() }),
   z.object({ action: z.literal("removeBlackout"), blackoutId: idField }),
+  z.object({
+    action: z.literal("addStaff"),
+    name: z.string().trim().min(2, "Enter their name").max(80),
+    email: z.string().trim().toLowerCase().max(200).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Enter a valid email"),
+    password: z.string().min(10, "Use at least 10 characters for the password").max(200),
+  }),
+  z.object({ action: z.literal("setStaffActive"), staffId: idField, active: z.boolean() }),
+  z.object({ action: z.literal("resetStaffPassword"), staffId: idField, password: z.string().min(10, "Use at least 10 characters for the password").max(200) }),
+  z.object({ action: z.literal("removeStaff"), staffId: idField }),
 ]);
+
+type Action = z.infer<typeof actionSchema>;
+
+/** What a team member (not the owner) may do: bookings and IDs, payment links, pickups and blocked dates. */
+const STAFF_ACTIONS = new Set<Action["action"]>([
+  "approve", "setStatus", "markPaid", "setPaymentLink", "resendAgreements", "reviewVerification", "reviewDriver",
+  "updateRecord", "addBlackout", "removeBlackout",
+]);
+
+function describe(a: Action): string {
+  switch (a.action) {
+    case "approve": return "approved reservation";
+    case "setStatus": return `set reservation to ${a.status}`;
+    case "markPaid": return "marked paid";
+    case "refund": return "refunded";
+    case "setPaymentLink": return "sent a payment link for";
+    case "resendAgreements": return "sent agreements or a signing reminder for";
+    case "reviewVerification": return a.decision === "approve" ? "approved the renter's ID on" : "rejected the renter's ID on";
+    case "reviewDriver": return a.decision === "approve" ? "approved the ID of" : "rejected the ID of";
+    case "updateRecord": return "updated the pickup and return record for";
+    case "saveVehicle": return "saved car";
+    case "addBlackout": return "blocked dates for";
+    case "removeBlackout": return "removed blocked dates for";
+    case "addStaff": return "added team member";
+    case "setStaffActive": return a.active ? "turned on access for" : "turned off access for";
+    case "resetStaffPassword": return "reset the password for";
+    case "removeStaff": return "removed team member";
+    default: return a.action;
+  }
+}
+
+/** A readable name for what an action touched. Runs before the action so removed rows can still be named. */
+async function targetFor(a: Action): Promise<string | null> {
+  if ("id" in a && typeof a.id === "string") return a.id;
+  switch (a.action) {
+    case "reviewDriver": {
+      const d = await db().prepare("SELECT full_name, booking_id FROM additional_drivers WHERE id = ?1").bind(a.driverId).first<{ full_name: string; booking_id: string }>();
+      return d ? `${d.full_name} on ${d.booking_id}` : null;
+    }
+    case "saveVehicle": return `${a.vehicle.year} ${a.vehicle.make} ${a.vehicle.model}`;
+    case "addBlackout": {
+      const v = await db().prepare("SELECT make, model FROM vehicles WHERE id = ?1").bind(a.vehicleId).first<{ make: string; model: string }>();
+      return `${v ? `${v.make} ${v.model}` : a.vehicleId}, ${a.startDate} to ${a.endDate}`;
+    }
+    case "removeBlackout": {
+      const r = await db()
+        .prepare("SELECT b.start_date, b.end_date, v.make, v.model FROM blackouts b LEFT JOIN vehicles v ON v.id = b.vehicle_id WHERE b.id = ?1")
+        .bind(a.blackoutId)
+        .first<{ start_date: string; end_date: string; make: string | null; model: string | null }>();
+      return r ? `${r.make ?? ""} ${r.model ?? ""}, ${r.start_date} to ${r.end_date}`.trim() : null;
+    }
+    case "addStaff": return `${a.name} (${a.email})`;
+    case "setStaffActive":
+    case "resetStaffPassword":
+    case "removeStaff": {
+      const s = await db().prepare("SELECT name FROM staff WHERE id = ?1").bind(a.staffId).first<{ name: string }>();
+      return s?.name ?? null;
+    }
+    default: return null;
+  }
+}
+
+async function logActivity(actor: string, action: string, target: string | null) {
+  await db()
+    .prepare("INSERT INTO activity_log (id, actor, action, target, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+    .bind(newId("act"), actor, action, target, new Date().toISOString())
+    .run();
+}
 
 async function refreshPdfs(id: string) {
   const b = await getBookingBundle(id);
@@ -200,8 +294,9 @@ export const Route = createFileRoute("/api/admin")({
     handlers: {
       GET: async ({ request }) => {
         try {
-          if (!(await verifySession(request))) return json({ ok: false, authed: false, configured: adminConfigured() }, 401);
-          return json({ ok: true, authed: true, data: await loadAdminData(new URL(request.url).origin) });
+          const session = await getSession(request);
+          if (!session) return json({ ok: false, authed: false, configured: adminConfigured() }, 401);
+          return json({ ok: true, authed: true, data: await loadAdminData(new URL(request.url).origin, session) });
         } catch (err) {
           console.error(err);
           return fail(err instanceof Error ? err.message : "Could not load the dashboard", 500);
@@ -211,7 +306,9 @@ export const Route = createFileRoute("/api/admin")({
         try {
           const origin = new URL(request.url).origin;
           if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
-            if (!(await verifySession(request))) return fail("Please log in", 401);
+            const photoSession = await getSession(request);
+            if (!photoSession) return fail("Please log in", 401);
+            if (photoSession.role !== "owner") return fail("Only the owner can change car photos", 403);
             return await uploadVehiclePhoto(await request.formData());
           }
           const parsed = actionSchema.safeParse(await request.json().catch(() => null));
@@ -220,16 +317,48 @@ export const Route = createFileRoute("/api/admin")({
 
           if (a.action === "login") {
             if (!adminConfigured()) return fail("Set ADMIN_PASSWORD in the website settings first, then redeploy");
+            const slow = () => new Promise((r) => setTimeout(r, 700));
+            if (a.email) {
+              const row = await db().prepare("SELECT * FROM staff WHERE email = ?1").bind(a.email).first<StaffRow>();
+              const nowMs = Date.now();
+              if (row?.locked_until && Date.parse(row.locked_until) > nowMs) {
+                await slow();
+                return fail("Too many wrong passwords. Try again in 15 minutes, or ask the owner to reset your password.", 429);
+              }
+              if (!row || row.active !== 1 || !(await verifyStaffPassword(row, a.password))) {
+                if (row) {
+                  const fails = row.failed_logins + 1;
+                  const lock = fails >= 8;
+                  await db()
+                    .prepare("UPDATE staff SET failed_logins = ?1, locked_until = ?2 WHERE id = ?3")
+                    .bind(lock ? 0 : fails, lock ? new Date(nowMs + 15 * 60_000).toISOString() : null, row.id)
+                    .run();
+                }
+                await slow();
+                return fail("Wrong email or password", 401);
+              }
+              await db()
+                .prepare("UPDATE staff SET failed_logins = 0, locked_until = NULL, last_login_at = ?1 WHERE id = ?2")
+                .bind(new Date().toISOString(), row.id)
+                .run();
+              await logActivity(row.name, "signed in", null).catch(() => undefined);
+              return json({ ok: true }, 200, { "Set-Cookie": sessionCookie(await issueSession(row.id)) });
+            }
             if (!(await checkPassword(a.password))) {
-              await new Promise((r) => setTimeout(r, 700));
+              await slow();
               return fail("Wrong password", 401);
             }
-            return json({ ok: true }, 200, { "Set-Cookie": sessionCookie(await issueSession()) });
+            return json({ ok: true }, 200, { "Set-Cookie": sessionCookie(await issueSession("owner")) });
           }
           if (a.action === "logout") return json({ ok: true }, 200, { "Set-Cookie": clearSessionCookie() });
-          if (!(await verifySession(request))) return fail("Please log in", 401);
+          const session = await getSession(request);
+          if (!session) return fail("Please log in", 401);
+          if (session.role !== "owner" && !STAFF_ACTIONS.has(a.action)) return fail("Only the owner can do that", 403);
+          const actor = session.role === "owner" ? "Owner" : session.name;
+          const target = await targetFor(a).catch(() => null);
 
           const now = new Date().toISOString();
+          const res = await (async (): Promise<Response> => {
           switch (a.action) {
             case "approve": {
               const b = await getBookingBundle(a.id);
@@ -416,8 +545,41 @@ export const Route = createFileRoute("/api/admin")({
               await db().prepare("DELETE FROM blackouts WHERE id = ?1").bind(a.blackoutId).run();
               return json({ ok: true });
             }
+            case "addStaff": {
+              const taken = await db().prepare("SELECT id FROM staff WHERE email = ?1").bind(a.email).first<{ id: string }>();
+              if (taken) return fail("Someone on your team already uses that email");
+              const h = await hashPassword(a.password);
+              await db()
+                .prepare("INSERT INTO staff (id, name, email, password_hash, password_salt, password_iterations) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+                .bind(newId("stf"), a.name, a.email, h.hash, h.salt, h.iterations)
+                .run();
+              return json({ ok: true });
+            }
+            case "setStaffActive": {
+              await db()
+                .prepare("UPDATE staff SET active = ?1, failed_logins = 0, locked_until = NULL WHERE id = ?2")
+                .bind(a.active ? 1 : 0, a.staffId)
+                .run();
+              return json({ ok: true });
+            }
+            case "resetStaffPassword": {
+              const h = await hashPassword(a.password);
+              const r = await db()
+                .prepare("UPDATE staff SET password_hash = ?1, password_salt = ?2, password_iterations = ?3, failed_logins = 0, locked_until = NULL WHERE id = ?4")
+                .bind(h.hash, h.salt, h.iterations, a.staffId)
+                .run();
+              if (!r.meta.changes) return fail("Team member not found", 404);
+              return json({ ok: true });
+            }
+            case "removeStaff": {
+              await db().prepare("DELETE FROM staff WHERE id = ?1").bind(a.staffId).run();
+              return json({ ok: true });
+            }
           }
           return fail("Unknown action");
+          })();
+          if (res.ok) await logActivity(actor, describe(a), target).catch(() => undefined);
+          return res;
         } catch (err) {
           console.error(err);
           return fail(err instanceof Error ? err.message : "Something went wrong", 500);
