@@ -10,7 +10,12 @@ import { isValidDay, parseRateTable } from "@/lib/dates";
 import { db, getBookingBundle, newId, storage, type AdditionalDriver, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
 import { refundPayment, squareConfigured } from "@/lib/square.server";
-import type { AdminActivity, AdminBooking, AdminData, AdminMe, AdminStaff, AdminVehicle } from "@/lib/types";
+import { missingTerm } from "@/lib/team-agreement";
+import {
+  emailTeamAgreementPdf, emailTeamAgreementSent, latestTeamAgreement, nextTeamAgreementNumber, renderTeamPdf, staffMustSign,
+  toMyAgreement, toSummary, type TeamAgreementRow,
+} from "@/lib/team-agreements.server";
+import type { AdminActivity, AdminBooking, AdminData, AdminMe, AdminStaff, AdminVehicle, MyAgreement, TeamAgreementSummary } from "@/lib/types";
 
 const json = (body: unknown, status = 200, headers?: Record<string, string>) => Response.json(body, { status, headers });
 const fail = (error: string, status = 400) => json({ ok: false, error }, status);
@@ -35,6 +40,20 @@ function toAdminVehicle(v: Vehicle): AdminVehicle {
 }
 
 async function loadAdminData(origin: string, session: Session): Promise<AdminData> {
+  const owner = session.role === "owner";
+  const me: AdminMe = owner ? { role: "owner", name: "Owner" } : { role: "staff", name: session.name };
+  let myAgreement: MyAgreement | null = null;
+  if (session.role === "staff") {
+    const row = await latestTeamAgreement(session.staffId);
+    myAgreement = row ? toMyAgreement(row, session.email) : null;
+    if (row?.status === "sent") {
+      // Nothing from the business is shown until the agreement, with its confidentiality terms, is signed.
+      return {
+        me, staff: [], activity: [], myAgreement, bookings: [], vehicles: [], blackouts: [], emails: [],
+        config: { square: squareConfigured(), email: emailConfigured() },
+      };
+    }
+  }
   const rows = (
     await db()
       .prepare(
@@ -100,17 +119,21 @@ async function loadAdminData(origin: string, session: Session): Promise<AdminDat
     };
   });
 
-  const owner = session.role === "owner";
-  const me: AdminMe = owner ? { role: "owner", name: "Owner" } : { role: "staff", name: session.name };
   const staffRows = owner
     ? (await db().prepare("SELECT * FROM staff ORDER BY created_at ASC").all<StaffRow>()).results
     : [];
   const activityRows = owner
     ? (await db().prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 60").all<{ id: string; actor: string; action: string; target: string | null; created_at: string }>()).results
     : [];
+  const agreementRows = owner
+    ? (await db().prepare("SELECT * FROM team_agreements WHERE status != 'void' ORDER BY created_at DESC").all<TeamAgreementRow>()).results
+    : [];
+  const latestAgreement = new Map<string, TeamAgreementSummary>();
+  for (const r of agreementRows) if (!latestAgreement.has(r.staff_id)) latestAgreement.set(r.staff_id, toSummary(r));
   const staff: AdminStaff[] = staffRows.map((s) => ({
     id: s.id, name: s.name, email: s.email, active: s.active === 1,
     locked: Boolean(s.locked_until && Date.parse(s.locked_until) > Date.now()), lastLoginAt: s.last_login_at, createdAt: s.created_at,
+    agreement: latestAgreement.get(s.id) ?? null,
   }));
   const activity: AdminActivity[] = activityRows.map((r) => ({ id: r.id, actor: r.actor, action: r.action, target: r.target, createdAt: r.created_at }));
 
@@ -118,6 +141,7 @@ async function loadAdminData(origin: string, session: Session): Promise<AdminDat
     me,
     staff,
     activity,
+    myAgreement,
     bookings,
     vehicles: vehicles.map(toAdminVehicle),
     blackouts: blackouts.map((b) => ({ id: b.id, vehicleId: b.vehicle_id, startDate: b.start_date, endDate: b.end_date, reason: b.reason })),
@@ -186,6 +210,25 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("setStaffActive"), staffId: idField, active: z.boolean() }),
   z.object({ action: z.literal("resetStaffPassword"), staffId: idField, password: z.string().min(10, "Use at least 10 characters for the password").max(200) }),
   z.object({ action: z.literal("removeStaff"), staffId: idField }),
+  z.object({
+    action: z.literal("sendTeamAgreement"),
+    staffId: idField,
+    terms: z.object({
+      contractorName: z.string().trim().min(2).max(120),
+      startDate: day,
+      weeklyFee: z.string().trim().min(1).max(20),
+      payDay: z.string().trim().min(1).max(60),
+      payMethod: z.string().trim().min(1).max(80),
+      hoursPerWeek: z.string().trim().min(1).max(20),
+      workingHours: z.string().trim().min(1).max(120),
+      replyHours: z.string().trim().min(1).max(20),
+      timeOffDays: z.string().trim().min(1).max(20),
+      noticeDays: z.string().trim().min(1).max(20),
+      ownerName: z.string().trim().min(2).max(120),
+    }),
+  }),
+  z.object({ action: z.literal("voidTeamAgreement"), agreementId: idField }),
+  z.object({ action: z.literal("ownerSignTeamAgreement"), agreementId: idField, name: z.string().trim().min(2).max(120), agree: z.literal(true) }),
 ]);
 
 type Action = z.infer<typeof actionSchema>;
@@ -214,6 +257,9 @@ function describe(a: Action): string {
     case "setStaffActive": return a.active ? "turned on access for" : "turned off access for";
     case "resetStaffPassword": return "reset the password for";
     case "removeStaff": return "removed team member";
+    case "sendTeamAgreement": return "sent the Virtual Assistant Agreement to";
+    case "voidTeamAgreement": return "cancelled the agreement sent to";
+    case "ownerSignTeamAgreement": return "countersigned the agreement with";
     default: return a.action;
   }
 }
@@ -239,6 +285,15 @@ async function targetFor(a: Action): Promise<string | null> {
       return r ? `${r.make ?? ""} ${r.model ?? ""}, ${r.start_date} to ${r.end_date}`.trim() : null;
     }
     case "addStaff": return `${a.name} (${a.email})`;
+    case "voidTeamAgreement":
+    case "ownerSignTeamAgreement": {
+      const s = await db()
+        .prepare("SELECT s.name FROM team_agreements t JOIN staff s ON s.id = t.staff_id WHERE t.id = ?1")
+        .bind(a.agreementId)
+        .first<{ name: string }>();
+      return s?.name ?? null;
+    }
+    case "sendTeamAgreement":
     case "setStaffActive":
     case "resetStaffPassword":
     case "removeStaff": {
@@ -354,6 +409,9 @@ export const Route = createFileRoute("/api/admin")({
           const session = await getSession(request);
           if (!session) return fail("Please log in", 401);
           if (session.role !== "owner" && !STAFF_ACTIONS.has(a.action)) return fail("Only the owner can do that", 403);
+          if (session.role === "staff" && (await staffMustSign(session.staffId))) {
+            return fail("Please sign your agreement at the top of your dashboard first.", 403);
+          }
           const actor = session.role === "owner" ? "Owner" : session.name;
           const target = await targetFor(a).catch(() => null);
 
@@ -574,6 +632,46 @@ export const Route = createFileRoute("/api/admin")({
             case "removeStaff": {
               await db().prepare("DELETE FROM staff WHERE id = ?1").bind(a.staffId).run();
               return json({ ok: true });
+            }
+            case "sendTeamAgreement": {
+              const member = await db().prepare("SELECT id, name, email FROM staff WHERE id = ?1").bind(a.staffId).first<{ id: string; name: string; email: string }>();
+              if (!member) return fail("Team member not found", 404);
+              const missing = missingTerm(a.terms);
+              if (missing) return fail(`Fill in: ${missing}`);
+              const number = await nextTeamAgreementNumber();
+              await db().batch([
+                db().prepare("UPDATE team_agreements SET status = 'void' WHERE staff_id = ?1 AND status = 'sent'").bind(member.id),
+                db()
+                  .prepare("INSERT INTO team_agreements (id, staff_id, number, terms, status, created_at) VALUES (?1, ?2, ?3, ?4, 'sent', ?5)")
+                  .bind(newId("tag"), member.id, number, JSON.stringify(a.terms), now),
+              ]);
+              await emailTeamAgreementSent(a.terms.contractorName, member.email, origin);
+              return json({ ok: true, emailed: emailConfigured() });
+            }
+            case "voidTeamAgreement": {
+              const r = await db()
+                .prepare("UPDATE team_agreements SET status = 'void' WHERE id = ?1 AND status = 'sent'")
+                .bind(a.agreementId)
+                .run();
+              if (!r.meta.changes) return fail("Only an agreement that hasn't been signed yet can be cancelled");
+              return json({ ok: true });
+            }
+            case "ownerSignTeamAgreement": {
+              const row = await db().prepare("SELECT * FROM team_agreements WHERE id = ?1").bind(a.agreementId).first<TeamAgreementRow>();
+              if (!row) return fail("Agreement not found", 404);
+              if (row.status !== "signed") return fail("Your team member hasn't signed it yet");
+              if (row.owner_signed_at) return json({ ok: true });
+              await db()
+                .prepare("UPDATE team_agreements SET owner_name = ?1, owner_signed_at = ?2 WHERE id = ?3")
+                .bind(a.name, now, row.id)
+                .run();
+              const member = await db().prepare("SELECT email FROM staff WHERE id = ?1").bind(row.staff_id).first<{ email: string }>();
+              const fresh = await db().prepare("SELECT * FROM team_agreements WHERE id = ?1").bind(row.id).first<TeamAgreementRow>();
+              if (fresh && member) {
+                const pdf = await renderTeamPdf(fresh, member.email);
+                await emailTeamAgreementPdf(fresh, member.email, pdf, true);
+              }
+              return json({ ok: true, emailed: emailConfigured() });
             }
           }
           return fail("Unknown action");

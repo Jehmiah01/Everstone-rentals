@@ -1,5 +1,6 @@
 // Shapes the browser receives. Never include secrets or other customers' data.
 import type { AgreementDoc } from "./agreements";
+import type { TeamTerms } from "./team-agreement";
 
 export type PublicVehicle = {
   id: string; slug: string; year: number; make: string; model: string; color: string | null;
@@ -105,8 +106,21 @@ export type AdminVehicle = {
 
 export type AdminMe = { role: "owner" | "staff"; name: string };
 
+/** The latest agreement the owner sent a team member (none once cancelled). */
+export type TeamAgreementSummary = {
+  id: string; number: string; status: "sent" | "signed"; terms: TeamTerms; contractorSignedAt: string | null;
+  ownerSignedAt: string | null; ownerName: string | null; pdfUrl: string | null; createdAt: string;
+};
+
+/** A team member's own agreement, with the full text to read and sign. */
+export type MyAgreement = {
+  id: string; number: string; status: "sent" | "signed"; doc: AgreementDoc; contractorName: string;
+  contractorSignedAt: string | null; ownerSignedAt: string | null; pdfUrl: string | null;
+};
+
 export type AdminStaff = {
   id: string; name: string; email: string; active: boolean; locked: boolean; lastLoginAt: string | null; createdAt: string;
+  agreement: TeamAgreementSummary | null;
 };
 
 export type AdminActivity = { id: string; actor: string; action: string; target: string | null; createdAt: string };
@@ -118,6 +132,8 @@ export type AdminData = {
   staff: AdminStaff[];
   /** Owner only; empty for team members. */
   activity: AdminActivity[];
+  /** Team members only: their agreement. While it's unsigned, nothing else is sent. */
+  myAgreement: MyAgreement | null;
   bookings: AdminBooking[];
   vehicles: AdminVehicle[];
   blackouts: { id: string; vehicleId: string; startDate: string; endDate: string; reason: string | null }[];

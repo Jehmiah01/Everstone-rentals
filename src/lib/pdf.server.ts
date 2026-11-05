@@ -27,6 +27,8 @@ export type SignatureInfo = {
   signatureJpeg: Uint8Array | null;
   repName: string | null;
   repSignedAt: string | null;
+  /** Heading over the first signer's block. Defaults to RENTER. */
+  signerLabel?: string;
 };
 
 function normalize(input: string): string {
@@ -287,7 +289,7 @@ export function renderAgreementPdf(doc: AgreementDoc, sig: SignatureInfo, compan
   pdf.gap(10);
 
   pdf.y -= 12;
-  pdf.line("RENTER", 9, true);
+  pdf.line(sig.signerLabel ?? "RENTER", 9, true);
   pdf.y -= 14;
   pdf.line(`Printed Name: ${sig.renterName}`, 9.5, false);
   pdf.y -= 14;

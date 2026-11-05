@@ -1,7 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { fmtMoney, fmtTime12, formatEt, prettyDay, shortDay } from "@/lib/dates";
-import type { AdminBooking, AdminData, AdminDriver, AdminMe, AdminStaff, AdminVehicle } from "@/lib/types";
+import { ESIGN_CONSENT } from "@/lib/agreements";
+import { TERM_FIELDS, buildTeamAgreement, emptyTerms, missingTerm, type TeamTerms } from "@/lib/team-agreement";
+import type { AdminBooking, AdminData, AdminDriver, AdminMe, AdminStaff, AdminVehicle, MyAgreement } from "@/lib/types";
+
+import { AgreementView } from "../booking/agreement-view";
+import { SignaturePad } from "../booking/signature-pad";
 
 import { Checkbox, ContinueButton, Field, inputClass } from "../booking/form";
 import { LogoMark } from "../site/chrome";
@@ -222,6 +227,7 @@ export function AdminApp() {
     ["team", "Team"],
   ] as const).filter(([id]) => owner || (id !== "cars" && id !== "team"));
   const shownTab = tabs.some(([id]) => id === tab) ? tab : "reservations";
+  const mustSign = !owner && data?.myAgreement?.status === "sent";
 
   return (
     <MeContext.Provider value={me}>
@@ -231,7 +237,17 @@ export function AdminApp() {
           <LogoMark className="size-8 text-cobalt" />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{owner ? "Owner dashboard" : "Team dashboard"}</h1>
-            {!owner ? <p className="text-sm text-subtle">Signed in as {me.name}</p> : null}
+            {!owner ? (
+              <p className="text-sm text-subtle">
+                Signed in as {me.name}
+                {data?.myAgreement?.pdfUrl && !mustSign ? (
+                  <>
+                    {" · "}
+                    <a href={data.myAgreement.pdfUrl} target="_blank" rel="noreferrer" className="underline underline-offset-4">My agreement</a>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
         </div>
         <SmallButton tone="ghost" onClick={async () => { await post({ action: "logout" }).catch(() => undefined); setAuthed(false); setData(null); }}>
@@ -252,6 +268,10 @@ export function AdminApp() {
         </p>
       ) : null}
 
+      {mustSign && data?.myAgreement ? (
+        <SignTeamAgreement a={data.myAgreement} onDone={load} />
+      ) : (
+      <>
       <div className="mt-8 flex flex-wrap gap-2 border-b border-line" role="tablist" aria-label="Dashboard sections">
         {tabs.map(([id, label]) => (
           <button
@@ -277,6 +297,8 @@ export function AdminApp() {
         <Team data={data} run={run} busy={busy} />
       ) : (
         <Emails data={data} />
+      )}
+      </>
       )}
     </div>
     </MeContext.Provider>
@@ -344,7 +366,224 @@ function StaffItem({ s, run, busy }: { s: AdminStaff; run: Run; busy: boolean })
           </SmallButton>
         </div>
       ) : null}
+      <AgreementPanel s={s} run={run} busy={busy} />
     </li>
+  );
+}
+
+/** Owner's view of a team member's agreement: fill in the terms, send it, countersign, download. */
+function AgreementPanel({ s, run, busy }: { s: AdminStaff; run: Run; busy: boolean }) {
+  const a = s.agreement;
+  const first = s.name.split(" ")[0] || s.name;
+  const [editing, setEditing] = useState(false);
+  const [terms, setTerms] = useState<TeamTerms>(() => a?.terms ?? emptyTerms(s.name));
+  const [preview, setPreview] = useState(false);
+  const [ownerName, setOwnerName] = useState(a?.terms.ownerName ?? "Jehmiah Johnson");
+  const [agree, setAgree] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const shownTerms = editing || !a ? terms : a.terms;
+  const missing = missingTerm(shownTerms);
+  const doc = missing ? null : buildTeamAgreement({ number: a && !editing ? a.number : "Draft", terms: shownTerms, contractorEmail: s.email, contractorAddress: null });
+  const head = (badge: ReactNode) => (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h4 className="font-medium">Virtual Assistant Agreement</h4>
+      {badge}
+    </div>
+  );
+  const previewBlock = preview && doc ? <div className="mt-3"><AgreementView doc={doc} initials="" onInitials={() => undefined} /></div> : null;
+  const previewButton = (
+    <SmallButton tone="ghost" disabled={!doc} onClick={() => setPreview((v) => !v)}>{preview ? "Hide agreement" : "Read agreement"}</SmallButton>
+  );
+
+  if (!a || editing) {
+    return (
+      <div className="mt-4 border-t border-line pt-4">
+        {head(a ? <Badge tone="plain">Editing</Badge> : <Badge tone="plain">Not sent</Badge>)}
+        <p className="mt-1 text-sm text-subtle">
+          {a
+            ? "Change the terms, then send it again. The copy she hasn't signed is cancelled."
+            : `Fill in the terms and send it. ${first} has to sign it before she can use the dashboard.`}
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {TERM_FIELDS.map((f) => (
+            <Field key={f.key} id={`t-${s.id}-${f.key}`} label={f.label} hint={f.hint}>
+              <input
+                id={`t-${s.id}-${f.key}`}
+                type={f.type ?? "text"}
+                inputMode={f.inputMode}
+                value={terms[f.key]}
+                onChange={(e) => setTerms((p) => ({ ...p, [f.key]: e.target.value }))}
+                className={inputClass}
+              />
+            </Field>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {previewButton}
+          <SmallButton
+            tone="cobalt"
+            disabled={busy || Boolean(missing)}
+            onClick={async () => {
+              const ok = await run({ action: "sendTeamAgreement", staffId: s.id, terms }, `Agreement sent. ${first} will be asked to sign it when she signs in.`);
+              if (ok) {
+                setEditing(false);
+                setPreview(false);
+              }
+            }}
+          >
+            Send to {first} to sign
+          </SmallButton>
+          {a ? <SmallButton tone="ghost" onClick={() => { setEditing(false); setPreview(false); }}>Cancel changes</SmallButton> : null}
+        </div>
+        {missing ? <p className="mt-2 text-sm text-subtle">Still to fill in: {missing}</p> : null}
+        {previewBlock}
+      </div>
+    );
+  }
+
+  if (a.status === "sent") {
+    return (
+      <div className="mt-4 border-t border-line pt-4">
+        {head(<Badge tone="warn">Waiting for {first}</Badge>)}
+        <p className="mt-1 text-sm text-subtle">
+          Agreement {a.number}, sent {when(a.createdAt)}. {first} sees it when she signs in and can't use the dashboard until she signs.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {previewButton}
+          <SmallButton tone="ghost" onClick={() => { setTerms(a.terms); setEditing(true); setPreview(false); }}>Change terms</SmallButton>
+          <SmallButton
+            tone="danger"
+            disabled={busy}
+            onClick={async () => {
+              if (!confirmCancel) {
+                setConfirmCancel(true);
+                return;
+              }
+              setConfirmCancel(false);
+              await run({ action: "voidTeamAgreement", agreementId: a.id }, "Agreement cancelled.");
+            }}
+          >
+            {confirmCancel ? "Tap again to cancel it" : "Cancel agreement"}
+          </SmallButton>
+        </div>
+        {previewBlock}
+      </div>
+    );
+  }
+
+  if (!a.ownerSignedAt) {
+    return (
+      <div className="mt-4 border-t border-line pt-4">
+        {head(<Badge tone="warn">Needs your signature</Badge>)}
+        <p className="mt-1 text-sm text-subtle">
+          {first} signed agreement {a.number} on {a.contractorSignedAt ? when(a.contractorSignedAt) : ""}. Read it, then countersign for Everstone Consulting Group LLC.
+        </p>
+        {a.pdfUrl ? (
+          <p className="mt-2 text-sm">
+            <a href={a.pdfUrl} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-4">Read the signed agreement (PDF)</a>
+          </p>
+        ) : null}
+        <div className="mt-3 space-y-3">
+          <Field id={`own-${s.id}`} label="Your full name">
+            <input id={`own-${s.id}`} value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className={inputClass} />
+          </Field>
+          <Checkbox id={`own-agree-${s.id}`} checked={agree} onChange={setAgree}>
+            I agree to this Virtual Assistant Agreement on behalf of Everstone Consulting Group LLC and sign it electronically.
+          </Checkbox>
+          <SmallButton
+            tone="cobalt"
+            disabled={busy || !agree || ownerName.trim().length < 2}
+            onClick={() => run({ action: "ownerSignTeamAgreement", agreementId: a.id, name: ownerName.trim(), agree: true }, "Signed. You both get the final copy by email.")}
+          >
+            Sign as owner
+          </SmallButton>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      {head(<Badge tone="ok">Signed by both</Badge>)}
+      <p className="mt-1 text-sm text-subtle">
+        Agreement {a.number}: {first} signed {a.contractorSignedAt ? when(a.contractorSignedAt) : ""}; you signed {when(a.ownerSignedAt)}.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-medium">
+        {a.pdfUrl ? (
+          <>
+            <a href={a.pdfUrl} target="_blank" rel="noreferrer" className="min-h-11 content-center underline underline-offset-4">View PDF</a>
+            <a href={`${a.pdfUrl}?download=1`} className="min-h-11 content-center underline underline-offset-4">Download</a>
+          </>
+        ) : null}
+        <SmallButton tone="ghost" onClick={() => { setTerms(a.terms); setEditing(true); }}>Send new terms</SmallButton>
+      </div>
+    </div>
+  );
+}
+
+/** A team member's own agreement: read it, then sign before using the dashboard. */
+function SignTeamAgreement({ a, onDone }: { a: MyAgreement; onDone: () => Promise<void> }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [typedName, setTypedName] = useState("");
+  const [address, setAddress] = useState("");
+  const [hasInk, setHasInk] = useState(false);
+  const [consentEsign, setConsentEsign] = useState(false);
+  const [consentTerms, setConsentTerms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ready = typedName.trim().length > 1 && address.trim().length >= 5 && hasInk && consentEsign && consentTerms;
+
+  async function submit() {
+    const canvas = canvasRef.current;
+    if (!ready || !canvas) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+      if (!blob) throw new Error("Could not read your signature. Please try again.");
+      const form = new FormData();
+      form.append("agreementId", a.id);
+      form.append("typedName", typedName);
+      form.append("address", address);
+      form.append("consentEsign", String(consentEsign));
+      form.append("consentTerms", String(consentTerms));
+      form.append("signature", blob, "signature.jpg");
+      const res = await fetch("/api/team-sign", { method: "POST", body: form });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? "Signing failed. Please try again.");
+      await onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Signing failed. Please try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-8 space-y-6">
+      <p className="border border-warn bg-warn-tint p-4 text-sm text-warn">
+        Please read and sign your Virtual Assistant Agreement. You can use the dashboard as soon as it's signed.
+      </p>
+      <AgreementView doc={a.doc} initials="" onInitials={() => undefined} />
+      <section className="space-y-5 border border-line bg-surface p-5" aria-labelledby="va-sign-heading">
+        <h2 id="va-sign-heading" className="text-lg font-semibold">Sign</h2>
+        <Field id="va-address" label="Your mailing address" hint="It goes into Section 1 of the agreement.">
+          <textarea id="va-address" rows={2} value={address} onChange={(e) => setAddress(e.target.value)} className={`${inputClass} h-auto py-3`} autoComplete="street-address" />
+        </Field>
+        <Field id="va-name" label="Type your full name" hint={`Exactly as in the agreement: ${a.contractorName}`}>
+          <input id="va-name" value={typedName} onChange={(e) => setTypedName(e.target.value)} className={inputClass} autoComplete="name" />
+        </Field>
+        <div>
+          <p className="text-sm font-medium">Draw your signature</p>
+          <div className="mt-2"><SignaturePad canvasRef={canvasRef} onInk={setHasInk} typedName={typedName} /></div>
+        </div>
+        <Checkbox id="va-esign" checked={consentEsign} onChange={setConsentEsign}>{ESIGN_CONSENT}</Checkbox>
+        <Checkbox id="va-terms" checked={consentTerms} onChange={setConsentTerms}>
+          I have read the Virtual Assistant Agreement above and agree to all of its terms.
+        </Checkbox>
+        {error ? <p role="alert" className="border border-danger bg-danger-tint p-4 text-sm text-danger">{error}</p> : null}
+        <ContinueButton type="button" onClick={submit} disabled={!ready} busy={busy}>Sign agreement</ContinueButton>
+      </section>
+    </div>
   );
 }
 

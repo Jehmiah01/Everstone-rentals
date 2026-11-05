@@ -11,7 +11,7 @@ export type AgreementBlock =
   | { kind: "initials"; id: string; label: string };
 export type AgreementSection = { number: string; heading: string; blocks: AgreementBlock[] };
 export type AgreementDoc = {
-  kind: "rental" | "easy_sign";
+  kind: "rental" | "easy_sign" | "team";
   title: string;
   subtitle: string;
   number: string;

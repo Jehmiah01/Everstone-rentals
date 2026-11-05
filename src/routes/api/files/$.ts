@@ -2,7 +2,7 @@
 // the reservation's private token or an admin session; vehicle photos are public.
 import { createFileRoute } from "@tanstack/react-router";
 
-import { verifySession } from "@/lib/auth.server";
+import { getSession, verifySession } from "@/lib/auth.server";
 import { db, storage } from "@/lib/db.server";
 
 const notFound = () => new Response("Not found", { status: 404 });
@@ -19,6 +19,12 @@ export const Route = createFileRoute("/api/files/$")({
           const isPublic = key.startsWith("vehicles/");
           let allowed = isPublic;
           if (!allowed && key.startsWith("bookings/") && (await verifySession(request))) allowed = true;
+          if (!allowed && key.startsWith("staff/")) {
+            // Team agreements: the owner sees all; a team member only her own.
+            const session = await getSession(request);
+            if (session?.role === "owner") allowed = true;
+            else if (session?.role === "staff" && key.startsWith(`staff/${session.staffId}/`)) allowed = true;
+          }
           if (!allowed) {
             const b = url.searchParams.get("b") ?? "";
             const t = url.searchParams.get("t") ?? "";

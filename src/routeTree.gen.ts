@@ -17,6 +17,7 @@ import { Route as DriverIdRouteImport } from './routes/driver.$id'
 import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as ApiVerifyDriverRouteImport } from './routes/api/verify-driver'
 import { Route as ApiVerifyRouteImport } from './routes/api/verify'
+import { Route as ApiTeamSignRouteImport } from './routes/api/team-sign'
 import { Route as ApiSignRouteImport } from './routes/api/sign'
 import { Route as ApiAdminRouteImport } from './routes/api/admin'
 import { Route as BookingIdIndexRouteImport } from './routes/booking.$id.index'
@@ -64,6 +65,11 @@ const ApiVerifyRoute = ApiVerifyRouteImport.update({
   path: '/api/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTeamSignRoute = ApiTeamSignRouteImport.update({
+  id: '/api/team-sign',
+  path: '/api/team-sign',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSignRoute = ApiSignRouteImport.update({
   id: '/api/sign',
   path: '/api/sign',
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
+  '/api/team-sign': typeof ApiTeamSignRoute
   '/api/verify': typeof ApiVerifyRoute
   '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
@@ -118,6 +125,7 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
+  '/api/team-sign': typeof ApiTeamSignRoute
   '/api/verify': typeof ApiVerifyRoute
   '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
@@ -135,6 +143,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/admin': typeof ApiAdminRoute
   '/api/sign': typeof ApiSignRoute
+  '/api/team-sign': typeof ApiTeamSignRoute
   '/api/verify': typeof ApiVerifyRoute
   '/api/verify-driver': typeof ApiVerifyDriverRoute
   '/book/$slug': typeof BookSlugRoute
@@ -153,6 +162,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/api/admin'
     | '/api/sign'
+    | '/api/team-sign'
     | '/api/verify'
     | '/api/verify-driver'
     | '/book/$slug'
@@ -169,6 +179,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/api/admin'
     | '/api/sign'
+    | '/api/team-sign'
     | '/api/verify'
     | '/api/verify-driver'
     | '/book/$slug'
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/api/admin'
     | '/api/sign'
+    | '/api/team-sign'
     | '/api/verify'
     | '/api/verify-driver'
     | '/book/$slug'
@@ -202,6 +214,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiAdminRoute: typeof ApiAdminRoute
   ApiSignRoute: typeof ApiSignRoute
+  ApiTeamSignRoute: typeof ApiTeamSignRoute
   ApiVerifyRoute: typeof ApiVerifyRoute
   ApiVerifyDriverRoute: typeof ApiVerifyDriverRoute
   BookSlugRoute: typeof BookSlugRoute
@@ -270,6 +283,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiVerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/team-sign': {
+      id: '/api/team-sign'
+      path: '/api/team-sign'
+      fullPath: '/api/team-sign'
+      preLoaderRoute: typeof ApiTeamSignRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/sign': {
       id: '/api/sign'
       path: '/api/sign'
@@ -322,6 +342,7 @@ const rootRouteChildren: RootRouteChildren = {
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiAdminRoute: ApiAdminRoute,
   ApiSignRoute: ApiSignRoute,
+  ApiTeamSignRoute: ApiTeamSignRoute,
   ApiVerifyRoute: ApiVerifyRoute,
   ApiVerifyDriverRoute: ApiVerifyDriverRoute,
   BookSlugRoute: BookSlugRoute,
