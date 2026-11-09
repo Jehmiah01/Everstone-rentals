@@ -9,7 +9,7 @@ export function HomeHero() {
           Rent a car in Baltimore, no runaround.
         </h1>
         <p className="mt-6 max-w-[52ch] text-lg leading-relaxed text-subtle">
-          Three reliable cars, one pickup spot in Gwynn Oak, and a booking you finish on your phone in minutes.
+          Reliable cars, one pickup spot in Gwynn Oak, and a booking you finish on your phone in minutes.
         </p>
         <div className="mt-9 flex flex-wrap items-center gap-x-8 gap-y-4">
           <BookCta href="/#fleet" />

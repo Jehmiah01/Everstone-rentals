@@ -91,6 +91,13 @@ function FleetCard({ v, wide, unavailable, today, to }: { v: PublicVehicle; wide
   );
 }
 
+const COUNT_WORDS = ["", "One", "Two", "Three", "Four", "Five", "Six"];
+
+/** Headline that stays accurate as cars are shown or hidden in the dashboard. */
+function fleetHeading(count: number) {
+  return count >= 2 && count < COUNT_WORDS.length ? `${COUNT_WORDS[count]} cars. One address.` : "Pick your car.";
+}
+
 export function FleetSection({ vehicles, unavailable, today, to }: {
   vehicles: PublicVehicle[]; unavailable: Record<string, string[]>; today: string; to: string;
 }) {
@@ -99,7 +106,7 @@ export function FleetSection({ vehicles, unavailable, today, to }: {
       <div className="mx-auto max-w-6xl px-5 py-16 md:py-24">
         <p className="font-mono text-xs uppercase tracking-[0.14em] text-subtle">The cars</p>
         <h2 className="mt-4 max-w-2xl text-3xl font-semibold tracking-tighter md:text-5xl">
-          {vehicles.length === 3 ? "Three cars. One address." : "Pick your car."}
+          {fleetHeading(vehicles.length)}
         </h2>
         <p className="mt-4 max-w-[60ch] leading-relaxed text-subtle">
           Weekly rentals come out cheapest. Every car is cleaned and checked before pickup.
