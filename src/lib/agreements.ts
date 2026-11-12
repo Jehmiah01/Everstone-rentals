@@ -50,6 +50,8 @@ export type AgreementContext = {
     mileageOut: string; fuelOut: string; conditionNotes: string; preRentalPhotos: boolean;
     actualReturn: string; mileageIn: string; fuelIn: string; damage: string; fees: string;
     depositRefunded: string; depositDeducted: string; finalPaid: string;
+    /** When the renter signed (ISO), or null before signing. */
+    signedAt: string | null;
   };
 };
 
@@ -61,6 +63,13 @@ export const LICENSE_ATTESTATION =
 
 const or = (value: string | null | undefined, fallback = "To be completed") =>
   value && value.trim() !== "" ? value : fallback;
+
+// Wording change on 2026-11-12: the Vehicle Rental Agreement dropped the
+// internal "Claim File Checklist" section and hides the deposit lines when no
+// deposit is taken. Agreements signed before then keep their original wording
+// whenever their PDFs are rebuilt, so a signed contract never changes.
+const WORDING_V2_FROM = "2026-11-12T02:27:00.000Z";
+const signedBeforeV2 = (signedAt: string | null) => Boolean(signedAt && signedAt < WORDING_V2_FROM);
 
 function rateScheduleLine(table: number[]): string {
   const tiers = table.map((c, i) => `${i + 1} day${i ? "s" : ""} ${fmtMoney(c)}`).join("; ");
@@ -216,6 +225,8 @@ export function buildRentalAgreement(ctx: AgreementContext): AgreementDoc {
 
 export function buildEasySignAgreement(ctx: AgreementContext): AgreementDoc {
   const { company, vehicle: v, customer: c, booking: b } = ctx;
+  const legacy = signedBeforeV2(b.signedAt);
+  const showDepositLines = legacy || v.depositCents > 0 || b.depositRefunded.trim() !== "" || b.depositDeducted.trim() !== "";
   return {
     kind: "easy_sign",
     title: "Vehicle Rental Agreement",
@@ -309,21 +320,27 @@ export function buildEasySignAgreement(ctx: AgreementContext): AgreementDoc {
           { label: "Fuel Level In", value: or(b.fuelIn, "Recorded at return") },
           { label: "Damage Charges", value: or(b.damage, "Recorded at return") },
           { label: "Fees/Taxes/Other", value: or(b.fees, "Recorded at return") },
-          { label: "Deposit Refunded", value: or(b.depositRefunded, "Recorded at return") },
-          { label: "Deposit Deducted", value: or(b.depositDeducted, "Recorded at return") },
+          ...(showDepositLines
+            ? [
+                { label: "Deposit Refunded", value: or(b.depositRefunded, "Recorded at return") },
+                { label: "Deposit Deducted", value: or(b.depositDeducted, "Recorded at return") },
+              ]
+            : []),
           { label: "Final Amount Paid", value: or(b.finalPaid, "Recorded at return") },
         ] }],
       },
-      {
-        number: "10", heading: "Claim File Checklist",
-        blocks: [{ kind: "bullets", items: [
-          "Driver's license photos",
-          "Payment records",
-          "Rental correspondence",
-          "Pre/post-rental photos",
-          "Incident documents, if applicable",
-        ] }],
-      },
+      ...(legacy
+        ? [{
+            number: "10", heading: "Claim File Checklist",
+            blocks: [{ kind: "bullets" as const, items: [
+              "Driver's license photos",
+              "Payment records",
+              "Rental correspondence",
+              "Pre/post-rental photos",
+              "Incident documents, if applicable",
+            ] }],
+          }]
+        : []),
     ],
   };
 }

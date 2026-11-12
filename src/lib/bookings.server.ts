@@ -59,6 +59,7 @@ export function agreementContext(b: BookingBundle): AgreementContext {
       actualReturn: booking.actual_return_at ?? "", mileageIn: booking.mileage_in ?? "", fuelIn: booking.fuel_in ?? "",
       damage: money(booking.damage_cents), fees: money(booking.fees_cents), depositRefunded: money(booking.deposit_refunded_cents),
       depositDeducted: money(booking.deposit_deducted_cents), finalPaid: money(booking.final_paid_cents),
+      signedAt: booking.agreements_signed_at,
     },
   };
 }
