@@ -16,7 +16,7 @@ export function ProtectionCard() {
     <div className="rc-card">
       <style>{CSS}</style>
       <span className="rc-tag">🛡️ Protect your rental</span>
-      <h3>Got your rental car? Now protect it.</h3>
+      <h3>Damage and theft protection from RentalCover</h3>
       <p>
         One dent, scratch or break-in can leave you paying the rental company's damage bill. Get damage and theft protection
         from RentalCover.com in minutes, before you drive away.
