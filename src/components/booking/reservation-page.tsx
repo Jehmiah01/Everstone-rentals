@@ -265,7 +265,7 @@ export function ReservationPage({ b, justSigned, returnedFromPay }: { b: Custome
           </Step>
         </ol>
       ) : null}
-      {paid && !closed ? <ProtectionCard /> : null}
+      {!closed ? <ProtectionCard /> : null}
 
       <section className="mt-10" aria-labelledby="details-heading">
         <h2 id="details-heading" className="text-xl font-semibold tracking-tight">Details</h2>
