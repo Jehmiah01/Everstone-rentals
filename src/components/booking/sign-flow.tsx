@@ -73,11 +73,12 @@ export function SignFlow({ booking, docs }: { booking: CustomerBookingView; docs
       <p className="font-mono text-xs uppercase tracking-[0.14em] text-subtle">Step 2 of 3</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tighter md:text-4xl">Review and sign your agreements</h1>
       <p className="mt-3 leading-relaxed text-subtle">
-        Both agreements are filled in from your reservation. Read them, add your initials in section 7, then sign once at the bottom to sign both.
+        Both agreements are filled in from your reservation. Tap each one to read it, then add your initials and sign once below to sign both.
       </p>
       <div className="mt-6"><ReservationSummary b={booking} /></div>
 
-      <div className="mt-8 space-y-8">
+      <h2 className="mt-10 text-lg font-semibold tracking-tight">Your agreements</h2>
+      <div className="mt-3 space-y-3">
         <AgreementView doc={docs.rental} initials={initials} onInitials={setInitials} />
         <AgreementView doc={docs.easy} initials={initials} onInitials={setInitials} />
       </div>

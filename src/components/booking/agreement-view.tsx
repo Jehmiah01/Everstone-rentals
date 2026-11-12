@@ -45,23 +45,35 @@ function Block({ block, initials, onInitials }: { block: AgreementBlock; initial
   );
 }
 
+// Each agreement starts folded into one tidy row. Renters tap it to read
+// the full text before signing; it stays on the page, nothing is hidden.
 export function AgreementView({ doc, initials, onInitials }: { doc: AgreementDoc; initials: string; onInitials: (v: string) => void }) {
   return (
-    <article className="border border-line bg-surface" aria-label={doc.title}>
-      <header className="border-b border-line p-5 md:px-8 md:py-6">
-        <p className="font-mono text-xs uppercase tracking-[0.14em] text-subtle">{doc.subtitle}</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">{doc.title}</h2>
-        <p className="mt-1 font-mono text-sm text-subtle">Agreement # {doc.number}</p>
-      </header>
-      <div className="divide-y divide-line">
-        {doc.sections.map((s) => (
-          <section key={`${doc.kind}-${s.number}`} className="px-5 py-4 md:px-8">
-            <h3 className="font-semibold">{s.number}. {s.heading}</h3>
-            {s.blocks.map((b, i) => <Block key={i} block={b} initials={initials} onInitials={onInitials} />)}
-          </section>
-        ))}
-      </div>
-      <footer className="border-t border-line bg-ground/60 px-5 py-4 text-sm leading-relaxed md:px-8">{doc.signingNote}</footer>
-    </article>
+    <details className="group border border-line bg-surface">
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 md:px-6 [&::-webkit-details-marker]:hidden">
+        <span>
+          <span className="block font-semibold tracking-tight">{doc.title}</span>
+          <span className="block text-sm text-subtle">
+            {doc.sections.length} sections · <span className="whitespace-nowrap">Agreement # {doc.number}</span>
+          </span>
+        </span>
+        <span className="shrink-0 text-sm font-medium text-cobalt underline underline-offset-4">
+          <span className="group-open:hidden">Read</span>
+          <span className="hidden group-open:inline">Hide</span>
+        </span>
+      </summary>
+      <article aria-label={doc.title} className="border-t border-line">
+        <p className="px-5 pt-4 font-mono text-xs uppercase tracking-[0.14em] text-subtle md:px-6">{doc.subtitle}</p>
+        <div className="divide-y divide-line">
+          {doc.sections.map((s) => (
+            <section key={`${doc.kind}-${s.number}`} className="px-5 py-4 md:px-6">
+              <h3 className="text-sm font-semibold">{s.number}. {s.heading}</h3>
+              {s.blocks.map((b, i) => <Block key={i} block={b} initials={initials} onInitials={onInitials} />)}
+            </section>
+          ))}
+        </div>
+        <footer className="border-t border-line bg-ground/60 px-5 py-4 text-sm leading-relaxed md:px-6">{doc.signingNote}</footer>
+      </article>
+    </details>
   );
 }
