@@ -9,6 +9,10 @@ import type { CustomerBookingView, CustomerDriver } from "@/lib/types";
 
 import { IdPhotoForm } from "./id-photo-form";
 import { ReservationSummary } from "./summary";
+import { IdPhotoForm } from "./id-photo-form";
+import { ReservationSummary } from "./summary";
+import { ProtectionCard } from "./protection-card";
+
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   requested: { label: "Waiting for approval", cls: "bg-warn-tint text-warn" },
@@ -264,6 +268,10 @@ export function ReservationPage({ b, justSigned, returnedFromPay }: { b: Custome
           </Step>
         </ol>
       ) : null}
+        </ol>
+      ) : null}
+
+      <section className="mt-10" aria-labelledby="details-heading">
 
       <section className="mt-10" aria-labelledby="details-heading">
         <h2 id="details-heading" className="text-xl font-semibold tracking-tight">Details</h2>
