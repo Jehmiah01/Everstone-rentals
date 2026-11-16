@@ -9,7 +9,8 @@ import { customerUrl, driverPath, driversNotCleared, loadSignature, regenerateAn
 import { addDays, diffDays, fmtMoney, fmtTime12, isValidDay, parseRateTable, prettyDay, shortDay } from "@/lib/dates";
 import { db, getBookingBundle, newId, storage, type AdditionalDriver, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
-import { createPaymentLink, refundPayment, squareConfigured } from "@/lib/square.server";
+import { applyPaidExtension } from "@/lib/extensions.server";
+import { createPaymentLink, deletePaymentLink, orderIsPaid, refundPayment, squareConfigured } from "@/lib/square.server";
 import { missingTerm } from "@/lib/team-agreement";
 import {
   emailTeamAgreementPdf, emailTeamAgreementSent, latestTeamAgreement, nextTeamAgreementNumber, renderTeamPdf, staffMustSign,
@@ -98,6 +99,7 @@ async function loadAdminData(origin: string, session: Session): Promise<AdminDat
       finalPaidCents: r.final_paid_cents, notes: r.notes, refundedCents: r.refunded_cents, refundedAt: r.refunded_at,
       originalReturnDate: r.original_return_date, originalReturnTime: r.original_return_time, extendedAt: r.extended_at,
       extensionCents: r.extension_cents ?? 0, extensionLink: r.extension_link, extensionPaidAt: r.extension_paid_at,
+      extensionBy: r.extension_by, extRequestDate: r.ext_req_date, extRequestCents: r.ext_req_cents,
       vehicleId: r.vehicle_id, vehicleName: `${r.v_year} ${r.v_make} ${r.v_model}`,
       customer: {
         name: r.c_name, email: r.c_email, phone: r.c_phone, address: `${r.c_address}, ${r.c_city}, ${r.c_state} ${r.c_zip}`,
@@ -485,6 +487,18 @@ export const Route = createFileRoute("/api/admin")({
                     : `${clash.full_name} has this car from ${prettyDay(clash.pickup_date)} (reservation ${clash.id}), so this rental can't be extended.`,
                 );
               }
+              if (bk.ext_req_order_id) {
+                // The renter started an extension online. If they paid, use that; otherwise turn their link off.
+                if (squareConfigured() && (await orderIsPaid(bk.ext_req_order_id)).paid) {
+                  await applyPaidExtension(bk.id, bk.ext_req_order_id, origin);
+                  return fail("The renter just paid online to extend this rental. Refresh the dashboard to see the new return day.");
+                }
+                if (bk.ext_req_link_id && squareConfigured()) await deletePaymentLink(bk.ext_req_link_id);
+                await db()
+                  .prepare("UPDATE bookings SET ext_req_date = NULL, ext_req_time = NULL, ext_req_cents = NULL, ext_req_link = NULL, ext_req_link_id = NULL, ext_req_order_id = NULL, ext_req_at = NULL WHERE id = ?1")
+                  .bind(bk.id)
+                  .run();
+              }
               const blocks = (
                 await db()
                   .prepare("SELECT start_date, end_date FROM blackouts WHERE vehicle_id = ?1 AND end_date >= ?2 AND start_date <= ?3 ORDER BY start_date")
@@ -494,7 +508,7 @@ export const Route = createFileRoute("/api/admin")({
 
               await db()
                 .prepare(
-                  "UPDATE bookings SET original_return_date = COALESCE(original_return_date, return_date), original_return_time = COALESCE(original_return_time, return_time), return_date = ?1, return_time = ?2, extended_at = ?3, extension_cents = COALESCE(extension_cents, 0) + ?4 WHERE id = ?5",
+                  "UPDATE bookings SET original_return_date = COALESCE(original_return_date, return_date), original_return_time = COALESCE(original_return_time, return_time), return_date = ?1, return_time = ?2, extended_at = ?3, extension_by = 'owner', extension_cents = COALESCE(extension_cents, 0) + ?4 WHERE id = ?5",
                 )
                 .bind(a.returnDate, a.returnTime, now, a.chargeCents, a.id)
                 .run();
@@ -510,12 +524,12 @@ export const Route = createFileRoute("/api/admin")({
                     amountCents: a.chargeCents,
                     name: `${car} rental extension to ${a.returnDate} (${a.id})`,
                     buyerEmail: b.customer.email,
-                    redirectUrl: reservationUrl,
+                    redirectUrl: `${reservationUrl}&extended=1`,
                   });
                   payUrl = link.url;
                   await db()
-                    .prepare("UPDATE bookings SET extension_link = ?1, extension_order_id = ?2, extension_paid_at = NULL WHERE id = ?3")
-                    .bind(link.url, link.orderId, a.id)
+                    .prepare("UPDATE bookings SET extension_link = ?1, extension_order_id = ?2, extension_link_cents = ?3, extension_paid_at = NULL WHERE id = ?4")
+                    .bind(link.url, link.orderId, a.chargeCents, a.id)
                     .run();
                   notes.push(`A Square link for ${fmtMoney(a.chargeCents)} went in the email.`);
                 } catch (err) {

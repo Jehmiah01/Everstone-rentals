@@ -40,6 +40,13 @@ export type Booking = {
   original_return_date: string | null; original_return_time: string | null; extended_at: string | null;
   /** Extra charged for extensions; not included in total_cents. */
   extension_cents: number; extension_link: string | null; extension_order_id: string | null; extension_paid_at: string | null;
+  /** "owner" (dashboard) or "renter" (paid online) for the latest extension. */
+  extension_by: string | null;
+  /** Amount of the latest dashboard extension link. */
+  extension_link_cents: number | null;
+  /** An extension the renter started online; applied once its Square order is paid. */
+  ext_req_date: string | null; ext_req_time: string | null; ext_req_cents: number | null; ext_req_link: string | null;
+  ext_req_link_id: string | null; ext_req_order_id: string | null; ext_req_at: string | null;
 };
 
 export type Agreement = {

@@ -3,9 +3,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { agreementDocs, customerView, docHashes, sendBookingReceived, toPublicVehicle } from "../bookings.server";
-import { addDays, ageOn, diffDays, extraDriverCharge, isValidDay, parseRateTable, priceVehicle, todayDay } from "../dates";
+import { addDays, ageOn, diffDays, extraDriverCharge, isValidDay, parseRateTable, prettyDay, priceVehicle, todayDay } from "../dates";
 import { db, findVerifiedCustomer, getBookingBundle, getVehicle, isVehicleFree, licenseAlreadyVerified, listVehicles, newId, newToken, nextAgreementNumber, sha256Hex, unavailableDates, type AdditionalDriver } from "../db.server";
-import { createPaymentLink, orderIsPaid, squareConfigured } from "../square.server";
+import { applyPaidExtension, extensionOffer, extensionPrice, markOwnerExtensionPaid, ownerExtensionDue } from "../extensions.server";
+import { createPaymentLink, deletePaymentLink, orderIsPaid, squareConfigured } from "../square.server";
 import type { AgreementDocs, CustomerBookingView, DriverPageView, HomeData, PublicVehicle } from "../types";
 
 const RANGE_DAYS = 180;
@@ -170,7 +171,65 @@ async function loadForCustomer(id: string, token: string) {
 
 export const getCustomerBooking = createServerFn({ method: "POST" })
   .validator(access)
-  .handler(async ({ data }): Promise<CustomerBookingView> => customerView(await loadForCustomer(data.id, data.token)));
+  .handler(async ({ data }): Promise<CustomerBookingView> => {
+    const bundle = await loadForCustomer(data.id, data.token);
+    const view = customerView(bundle);
+    view.extension = { ...view.extension, ...(await extensionOffer(bundle)) };
+    return view;
+  });
+
+/** Start an online extension: checks the days are free, then opens a Square link for the extra days. Applied once paid. */
+export const startExtension = createServerFn({ method: "POST" })
+  .validator(access.extend({ returnDate: z.string().refine(isValidDay, "Pick a valid date"), origin: z.string().url() }))
+  .handler(async ({ data }): Promise<{ url: string | null; message: string }> => {
+    const bundle = await loadForCustomer(data.id, data.token);
+    const bk = bundle.booking;
+    const ask = "Reply to your confirmation email to ask about more time.";
+    if (!squareConfigured()) return { url: null, message: `Online payment isn't available right now. ${ask}` };
+    // A payment for an earlier attempt may have just gone through.
+    if (bk.ext_req_order_id && (await orderIsPaid(bk.ext_req_order_id)).paid) {
+      await applyPaidExtension(bk.id, bk.ext_req_order_id, data.origin);
+      return { url: null, message: "Your earlier extension payment went through. Refresh this page to see your new return day." };
+    }
+    const offer = await extensionOffer(bundle);
+    if (!offer.maxDate) return { url: null, message: offer.note ?? `This reservation can't be extended online. ${ask}` };
+    if (data.returnDate <= bk.return_date) return { url: null, message: `Pick a day after ${prettyDay(bk.return_date)}.` };
+    if (data.returnDate > offer.maxDate) return { url: null, message: `The latest day you can extend to is ${prettyDay(offer.maxDate)}.` };
+    const price = extensionPrice(bundle, data.returnDate);
+    if (price.cents <= 0) return { url: null, message: ask };
+    if (bk.ext_req_link_id) await deletePaymentLink(bk.ext_req_link_id);
+    const { vehicle, customer } = bundle;
+    const link = await createPaymentLink({
+      bookingId: bk.id,
+      amountCents: price.cents,
+      name: `${vehicle.year} ${vehicle.make} ${vehicle.model} extension to ${data.returnDate} (${bk.id})`,
+      buyerEmail: customer.email,
+      redirectUrl: `${data.origin}/booking/${encodeURIComponent(bk.id)}?token=${bk.token}&extended=1`,
+    });
+    await db()
+      .prepare("UPDATE bookings SET ext_req_date = ?1, ext_req_time = ?2, ext_req_cents = ?3, ext_req_link = ?4, ext_req_link_id = ?5, ext_req_order_id = ?6, ext_req_at = ?7 WHERE id = ?8")
+      .bind(data.returnDate, bk.return_time, price.cents, link.url, link.id, link.orderId, new Date().toISOString(), bk.id)
+      .run();
+    return { url: link.url, message: "Continue to Square." };
+  });
+
+/** Called by the reservation page: applies a paid online extension, or marks a dashboard extension link paid. */
+export const confirmExtension = createServerFn({ method: "POST" })
+  .validator(access.extend({ origin: z.string().url() }))
+  .handler(async ({ data }): Promise<{ changed: boolean; waiting: boolean }> => {
+    const { booking: bk } = await loadForCustomer(data.id, data.token);
+    if (!squareConfigured()) return { changed: false, waiting: false };
+    if (bk.ext_req_order_id) {
+      if ((await orderIsPaid(bk.ext_req_order_id)).paid) {
+        return { changed: (await applyPaidExtension(bk.id, bk.ext_req_order_id, data.origin)) !== "none", waiting: false };
+      }
+      return { changed: false, waiting: true };
+    }
+    if (ownerExtensionDue(bk) && bk.extension_order_id && (await orderIsPaid(bk.extension_order_id)).paid) {
+      return { changed: await markOwnerExtensionPaid(bk.extension_order_id, data.origin), waiting: false };
+    }
+    return { changed: false, waiting: false };
+  });
 
 /** An additional driver's own ID check page, opened with the private link the renter sends them. */
 export const getDriverPage = createServerFn({ method: "POST" })

@@ -6,7 +6,7 @@ import { ReservationError } from "@/components/booking/summary";
 import { SiteFooter, SiteHeader } from "@/components/site/chrome";
 import { getCustomerBooking } from "@/lib/api/booking.functions";
 
-type Search = { token: string; signed?: boolean; paid?: boolean };
+type Search = { token: string; signed?: boolean; paid?: boolean; extended?: boolean };
 const flag = (v: unknown) => v === "1" || v === 1 || v === true || v === "true";
 
 function Page({ children }: { children: ReactNode }) {
@@ -24,6 +24,7 @@ export const Route = createFileRoute("/booking/$id/")({
     token: typeof s.token === "string" ? s.token : "",
     signed: flag(s.signed) || undefined,
     paid: flag(s.paid) || undefined,
+    extended: flag(s.extended) || undefined,
   }),
   loaderDeps: ({ search }) => ({ token: search.token }),
   loader: ({ params, deps }) => getCustomerBooking({ data: { id: params.id, token: deps.token } }),
@@ -38,10 +39,10 @@ export const Route = createFileRoute("/booking/$id/")({
 
 function ReservationRoute() {
   const b = Route.useLoaderData();
-  const { signed, paid } = Route.useSearch();
+  const { signed, paid, extended } = Route.useSearch();
   return (
     <Page>
-      <ReservationPage b={b} justSigned={Boolean(signed)} returnedFromPay={Boolean(paid)} />
+      <ReservationPage b={b} justSigned={Boolean(signed)} returnedFromPay={Boolean(paid)} returnedFromExtend={Boolean(extended)} />
     </Page>
   );
 }

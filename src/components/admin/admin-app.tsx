@@ -916,7 +916,8 @@ function BookingDetail({ b, vehicle, run, busy }: { b: AdminBooking; vehicle?: A
           <Row k="Pickup">{prettyDay(b.pickupDate)} at {fmtTime12(b.pickupTime)}</Row>
           <Row k="Return">
             {prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}
-            {b.originalReturnDate ? <span className="block text-subtle">Extended. Signed for {prettyDay(b.originalReturnDate)} at {fmtTime12(b.originalReturnTime ?? b.returnTime)}.</span> : null}
+            {b.originalReturnDate ? <span className="block text-subtle">Extended{b.extensionBy === "renter" ? " online by the renter" : ""}. Signed for {prettyDay(b.originalReturnDate)} at {fmtTime12(b.originalReturnTime ?? b.returnTime)}.</span> : null}
+            {b.extRequestDate ? <span className="block text-warn">The renter started extending to {prettyDay(b.extRequestDate)} ({fmtMoney(b.extRequestCents ?? 0)}) but hasn't paid yet.</span> : null}
           </Row>
           {b.originalReturnDate ? (
             <Row k="Extension charge">

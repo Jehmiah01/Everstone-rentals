@@ -31,8 +31,11 @@ export function toPublicVehicle(v: Vehicle): PublicVehicle {
 /** "Return moved to ... Approved by Owner on ... Extension charge: $X." Empty when the rental was never extended. */
 export function extensionLine(booking: BookingBundle["booking"]): string {
   if (!booking.original_return_date) return "";
-  const approved = booking.extended_at ? ` Approved by Owner on ${formatEt(booking.extended_at)}.` : "";
-  const charge = (booking.extension_cents ?? 0) > 0 ? ` Extension charge: ${fmtMoney(booking.extension_cents)}.` : " No extra charge.";
+  const who = booking.extension_by === "renter" ? "Requested and paid online by Renter" : "Approved by Owner";
+  const approved = booking.extended_at ? ` ${who} on ${formatEt(booking.extended_at)}.` : "";
+  const charge = (booking.extension_cents ?? 0) > 0
+    ? ` Extension charge: ${fmtMoney(booking.extension_cents)}${booking.extension_paid_at ? " (paid)" : ""}.`
+    : " No extra charge.";
   return `Return moved to ${prettyDay(booking.return_date)} at ${fmtTime12(booking.return_time)}.${approved}${charge}`;
 }
 
@@ -280,5 +283,18 @@ export function customerView(b: BookingBundle): CustomerBookingView {
     squareReady: squareConfigured(),
     emailReady: emailConfigured(),
     createdAt: booking.created_at,
+    extension: {
+      originalReturnDate: booking.original_return_date,
+      dueCents: (booking.extension_cents ?? 0) > 0 && booking.extension_link && !booking.extension_paid_at
+        ? booking.extension_link_cents ?? booking.extension_cents
+        : 0,
+      payLink: booking.extension_paid_at ? null : booking.extension_link,
+      pendingDate: booking.ext_req_date,
+      pendingCents: booking.ext_req_cents ?? 0,
+      pendingLink: booking.ext_req_link,
+      // Filled in by getCustomerBooking, which can look up the calendar.
+      maxDate: null,
+      note: null,
+    },
   };
 }

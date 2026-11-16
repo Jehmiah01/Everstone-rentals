@@ -76,6 +76,11 @@ export async function createPaymentLink(args: {
   return { url: body.payment_link.url, orderId: body.payment_link.order_id, id: body.payment_link.id };
 }
 
+/** Turn off a payment link so it can no longer be paid. Best effort. */
+export async function deletePaymentLink(id: string): Promise<void> {
+  await fetch(`${base()}/v2/online-checkout/payment-links/${encodeURIComponent(id)}`, { method: "DELETE", headers: headers() }).catch(() => undefined);
+}
+
 export async function orderIsPaid(orderId: string): Promise<{ paid: boolean; paymentId: string | null }> {
   const res = await fetch(`${base()}/v2/orders/${encodeURIComponent(orderId)}`, { headers: headers() });
   if (!res.ok) return { paid: false, paymentId: null };

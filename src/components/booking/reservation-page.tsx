@@ -2,11 +2,12 @@ import { useRouter } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { confirmPayment, startCheckout } from "@/lib/api/booking.functions";
+import { confirmExtension, confirmPayment, startCheckout, startExtension } from "@/lib/api/booking.functions";
 import { BRAND } from "@/lib/brand";
-import { fmtMoney } from "@/lib/dates";
+import { addDays, diffDays, fmtMoney, fmtTime12, isValidDay, prettyDay, priceVehicle, shortDay } from "@/lib/dates";
 import type { CustomerBookingView, CustomerDriver } from "@/lib/types";
 
+import { Field, inputClass } from "./form";
 import { IdPhotoForm } from "./id-photo-form";
 import { ReservationSummary } from "./summary";
 import { ProtectionCard } from "./protection-card";
@@ -115,7 +116,125 @@ function DriverCheck({ b, d, onDone }: { b: CustomerBookingView; d: CustomerDriv
   );
 }
 
-export function ReservationPage({ b, justSigned, returnedFromPay }: { b: CustomerBookingView; justSigned: boolean; returnedFromPay: boolean }) {
+const EXTEND_PICKS: [number, string][] = [[1, "+1 day"], [3, "+3 days"], [7, "+1 week"]];
+const btnPrimary = "inline-flex h-12 items-center bg-cobalt px-5 font-medium text-surface hover:bg-cobalt-deep disabled:bg-subtle";
+
+/** "Need the car longer?": pay for more days online; the extension is confirmed once Square takes the payment. */
+function ExtendSection({ b, returnedFromExtend }: { b: CustomerBookingView; returnedFromExtend: boolean }) {
+  const router = useRouter();
+  const x = b.extension;
+  const max = x.maxDate;
+  const [date, setDate] = useState(() => (max ? (addDays(b.returnDate, 7) <= max ? addDays(b.returnDate, 7) : max) : ""));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!returnedFromExtend && x.dueCents === 0 && !x.pendingDate) return;
+    let stop = false;
+    confirmExtension({ data: { id: b.id, token: b.token, origin: window.location.origin } })
+      .then((r) => {
+        if (stop) return;
+        if (r.changed) void router.invalidate();
+        else if (returnedFromExtend && r.waiting) setMsg("Square is still confirming your payment. Refresh this page in a minute.");
+      })
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+    // Run once per page load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const extra = max && isValidDay(date) ? diffDays(b.returnDate, date) : 0;
+  const valid = Boolean(max) && extra > 0 && date <= (max ?? "");
+  const price = valid ? priceVehicle(extra, b.vehicle).total_cents : 0;
+
+  async function go() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await startExtension({ data: { id: b.id, token: b.token, returnDate: date, origin: window.location.origin } });
+      if (r.url) {
+        window.location.href = r.url;
+        return;
+      }
+      setMsg(r.message);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Could not start the extension. Please try again.");
+    }
+    setBusy(false);
+  }
+
+  const justExtended = returnedFromExtend && Boolean(x.originalReturnDate) && !x.pendingDate && x.dueCents === 0;
+  if (!justExtended && x.dueCents === 0 && !max && !x.note) return null;
+
+  return (
+    <section className="mt-8 border border-line bg-surface p-5 md:p-6" aria-labelledby="extend-heading">
+      {justExtended ? (
+        <p role="status" className="mb-5 border border-ok bg-ok-tint p-4 text-ok">
+          Payment received. Your car is now due back {prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}.
+        </p>
+      ) : null}
+      {x.dueCents > 0 && x.payLink ? (
+        <>
+          <h2 id="extend-heading" className="text-xl font-semibold tracking-tight">Pay for your extension</h2>
+          <p className="mt-2 text-subtle">
+            Your rental was extended to <strong className="font-medium text-ink">{prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}</strong>. Pay {fmtMoney(x.dueCents)} to confirm it.
+          </p>
+          <a href={x.payLink} className={`mt-4 ${btnPrimary}`}>Pay {fmtMoney(x.dueCents)} with Square</a>
+        </>
+      ) : max ? (
+        <>
+          <h2 id="extend-heading" className="text-xl font-semibold tracking-tight">Need the car longer?</h2>
+          <p className="mt-2 text-subtle">
+            It's due back {prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}. Pick a new return day and pay for the extra days. It's confirmed as soon as you pay.
+          </p>
+          {x.pendingDate ? (
+            <p className="mt-4 border border-warn bg-warn-tint p-3 text-sm text-warn">
+              You started extending to {prettyDay(x.pendingDate)} ({fmtMoney(x.pendingCents)}) but it isn't paid yet.{" "}
+              {x.pendingLink ? <a href={x.pendingLink} className="font-medium underline underline-offset-4">Finish paying</a> : null}
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {EXTEND_PICKS.filter(([n]) => addDays(b.returnDate, n) <= max).map(([n, label]) => {
+              const d = addDays(b.returnDate, n);
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  aria-pressed={date === d}
+                  onClick={() => setDate(d)}
+                  className={`inline-flex min-h-11 items-center border px-4 text-sm font-medium ${date === d ? "border-ink bg-ink text-surface" : "border-line bg-surface hover:border-ink"}`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <Field id="extend-date" label="New return day" hint={`Latest available: ${prettyDay(max)}`} className="mt-4 max-w-xs">
+            <input id="extend-date" type="date" min={addDays(b.returnDate, 1)} max={max} value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+          </Field>
+          <p className="mt-4">
+            {valid
+              ? <>{extra} extra day{extra === 1 ? "" : "s"}: <strong className="font-semibold">{fmtMoney(price)}</strong>. Due back {prettyDay(date)} at {fmtTime12(b.returnTime)}.</>
+              : <span className="text-subtle">Pick a day between {shortDay(addDays(b.returnDate, 1))} and {shortDay(max)}.</span>}
+          </p>
+          <button type="button" onClick={go} disabled={!valid || busy} className={`mt-4 ${btnPrimary}`}>
+            {busy ? "Opening Square..." : valid ? `Pay ${fmtMoney(price)} and extend` : "Extend"}
+          </button>
+        </>
+      ) : x.note ? (
+        <>
+          <h2 id="extend-heading" className="text-xl font-semibold tracking-tight">Need the car longer?</h2>
+          <p className="mt-2 text-subtle">{x.note}</p>
+        </>
+      ) : null}
+      {msg ? <p role="status" className="mt-3 text-sm text-ink">{msg}</p> : null}
+    </section>
+  );
+}
+
+export function ReservationPage({ b, justSigned, returnedFromPay, returnedFromExtend = false }: { b: CustomerBookingView; justSigned: boolean; returnedFromPay: boolean; returnedFromExtend?: boolean }) {
   const router = useRouter();
   const [paying, setPaying] = useState(false);
   const [payMsg, setPayMsg] = useState<string | null>(null);
@@ -265,6 +384,7 @@ export function ReservationPage({ b, justSigned, returnedFromPay }: { b: Custome
           </Step>
         </ol>
       ) : null}
+      {!closed ? <ExtendSection b={b} returnedFromExtend={returnedFromExtend} /> : null}
       {!closed ? <ProtectionCard /> : null}
 
       <section className="mt-10" aria-labelledby="details-heading">

@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { loadSignature, regenerateAndStorePdfs } from "@/lib/bookings.server";
 import { db, getBookingBundle } from "@/lib/db.server";
+import { applyPaidExtension, markOwnerExtensionPaid } from "@/lib/extensions.server";
 import { verifyWebhookSignature } from "@/lib/square.server";
 
 type SquareEvent = {
@@ -44,11 +45,14 @@ export const Route = createFileRoute("/api/square/webhook")({
               }
             }
           } else {
-            // A payment for a rental extension link sent from the dashboard.
-            await db()
-              .prepare("UPDATE bookings SET extension_paid_at = COALESCE(extension_paid_at, ?1) WHERE extension_order_id = ?2")
-              .bind(new Date().toISOString(), payment.order_id)
-              .run();
+            // A rental extension: started online by the renter, or a link sent from the dashboard.
+            const origin = new URL(request.url).origin;
+            const ext = await db()
+              .prepare("SELECT id FROM bookings WHERE ext_req_order_id = ?1 LIMIT 1")
+              .bind(payment.order_id)
+              .first<{ id: string }>();
+            if (ext) await applyPaidExtension(ext.id, payment.order_id, origin);
+            else await markOwnerExtensionPaid(payment.order_id, origin);
           }
         }
         return Response.json({ ok: true });

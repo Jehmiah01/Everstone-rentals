@@ -46,6 +46,16 @@ export type CustomerBookingView = {
   squareReady: boolean;
   emailReady: boolean;
   createdAt: string;
+  extension: {
+    /** Return the renter signed for, when the rental has been extended. */
+    originalReturnDate: string | null;
+    /** A dashboard extension still to pay, and its Square link. */
+    dueCents: number; payLink: string | null;
+    /** An extension the renter started online but hasn't paid yet. */
+    pendingDate: string | null; pendingCents: number; pendingLink: string | null;
+    /** Latest day they can extend to online (null = can't), and why not. */
+    maxDate: string | null; note: string | null;
+  };
 };
 
 export type CustomerDriver = { id: string; fullName: string; verificationStatus: string; link: string };
@@ -87,6 +97,7 @@ export type AdminBooking = {
   refundedCents: number | null; refundedAt: string | null;
   originalReturnDate: string | null; originalReturnTime: string | null; extendedAt: string | null;
   extensionCents: number; extensionLink: string | null; extensionPaidAt: string | null;
+  extensionBy: string | null; extRequestDate: string | null; extRequestCents: number | null;
   vehicleId: string; vehicleName: string;
   customer: {
     name: string; email: string; phone: string; address: string; dob: string; dlNumber: string; dlState: string;
