@@ -1090,7 +1090,7 @@ function BookingDetail({ b, vehicle, run, busy }: { b: AdminBooking; vehicle?: A
         ) : (
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
             <span className="text-subtle">This reservation is {b.status}.</span>
-            {b.status !== "completed" ? <SmallButton tone="ghost" disabled={busy} onClick={() => run({ action: "setStatus", id: b.id, status: "requested" }, "Reopened.")}>Reopen</SmallButton> : null}
+            <SmallButton tone="ghost" disabled={busy} onClick={() => run({ action: "setStatus", id: b.id, status: "requested" }, "Reopened. The car is held for these dates again, and you can extend it now.")}>Reopen</SmallButton>
           </div>
         )}
       </section>
