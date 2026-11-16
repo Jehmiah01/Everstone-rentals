@@ -5,11 +5,11 @@ import { z } from "zod";
 
 import { BRAND } from "@/lib/brand";
 import { adminConfigured, checkPassword, clearSessionCookie, getSession, hashPassword, issueSession, sessionCookie, verifyStaffPassword, type Session, type StaffRow } from "@/lib/auth.server";
-import { driverPath, driversNotCleared, loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendApproval, sendSignedAgreements } from "@/lib/bookings.server";
-import { isValidDay, parseRateTable } from "@/lib/dates";
+import { customerUrl, driverPath, driversNotCleared, loadSignature, regenerateAndStorePdfs, sendAgreementReminder, sendApproval, sendSignedAgreements } from "@/lib/bookings.server";
+import { addDays, diffDays, fmtMoney, fmtTime12, isValidDay, parseRateTable, prettyDay, shortDay } from "@/lib/dates";
 import { db, getBookingBundle, newId, storage, type AdditionalDriver, type Agreement, type Booking, type Vehicle, type Verification } from "@/lib/db.server";
 import { emailConfigured, emailShell, sendEmail } from "@/lib/email.server";
-import { refundPayment, squareConfigured } from "@/lib/square.server";
+import { createPaymentLink, refundPayment, squareConfigured } from "@/lib/square.server";
 import { missingTerm } from "@/lib/team-agreement";
 import {
   emailTeamAgreementPdf, emailTeamAgreementSent, latestTeamAgreement, nextTeamAgreementNumber, renderTeamPdf, staffMustSign,
@@ -96,6 +96,8 @@ async function loadAdminData(origin: string, session: Session): Promise<AdminDat
       actualReturnAt: r.actual_return_at, damageCents: r.damage_cents, feesCents: r.fees_cents,
       depositRefundedCents: r.deposit_refunded_cents, depositDeductedCents: r.deposit_deducted_cents,
       finalPaidCents: r.final_paid_cents, notes: r.notes, refundedCents: r.refunded_cents, refundedAt: r.refunded_at,
+      originalReturnDate: r.original_return_date, originalReturnTime: r.original_return_time, extendedAt: r.extended_at,
+      extensionCents: r.extension_cents ?? 0, extensionLink: r.extension_link, extensionPaidAt: r.extension_paid_at,
       vehicleId: r.vehicle_id, vehicleName: `${r.v_year} ${r.v_make} ${r.v_model}`,
       customer: {
         name: r.c_name, email: r.c_email, phone: r.c_phone, address: `${r.c_address}, ${r.c_city}, ${r.c_state} ${r.c_zip}`,
@@ -187,6 +189,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve"), id: idField, repName: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("setStatus"), id: idField, status: z.enum(["requested", "declined", "cancelled", "completed"]), reason: z.string().trim().max(500).optional() }),
   z.object({ action: z.literal("markPaid"), id: idField }),
+  z.object({ action: z.literal("extend"), id: idField, returnDate: day, returnTime: z.string().regex(/^\d{2}:\d{2}$/, "Enter a return time"), chargeCents: cents }),
   z.object({ action: z.literal("refund"), id: idField, reason: z.string().trim().max(190).optional() }),
   z.object({ action: z.literal("setPaymentLink"), id: idField, url: z.string().url().max(500) }),
   z.object({ action: z.literal("resendAgreements"), id: idField }),
@@ -235,7 +238,7 @@ type Action = z.infer<typeof actionSchema>;
 
 /** What a team member (not the owner) may do: bookings and IDs, payment links, pickups and blocked dates. */
 const STAFF_ACTIONS = new Set<Action["action"]>([
-  "approve", "setStatus", "markPaid", "setPaymentLink", "resendAgreements", "reviewVerification", "reviewDriver",
+  "approve", "setStatus", "markPaid", "extend", "setPaymentLink", "resendAgreements", "reviewVerification", "reviewDriver",
   "updateRecord", "addBlackout", "removeBlackout",
 ]);
 
@@ -244,6 +247,7 @@ function describe(a: Action): string {
     case "approve": return "approved reservation";
     case "setStatus": return `set reservation to ${a.status}`;
     case "markPaid": return "marked paid";
+    case "extend": return `extended the return to ${prettyDay(a.returnDate)} (${a.chargeCents > 0 ? fmtMoney(a.chargeCents) : "no charge"}) for`;
     case "refund": return "refunded";
     case "setPaymentLink": return "sent a payment link for";
     case "resendAgreements": return "sent agreements or a signing reminder for";
@@ -451,6 +455,97 @@ export const Route = createFileRoute("/api/admin")({
                 });
               }
               return json({ ok: true });
+            }
+            case "extend": {
+              const b = await getBookingBundle(a.id);
+              if (!b) return fail("Reservation not found", 404);
+              const bk = b.booking;
+              if (!["requested", "approved"].includes(bk.status)) return fail("Only open reservations can be extended. Tap Reopen first.");
+              if (a.returnDate <= bk.return_date) return fail(`Pick a day after the current return day (${prettyDay(bk.return_date)}).`);
+              if (diffDays(bk.return_date, a.returnDate) > 90) return fail("That is more than 90 extra days. Pick an earlier date.");
+              if (b.customer.dl_expiration <= a.returnDate) {
+                return fail(`${b.customer.full_name}'s license expires ${prettyDay(b.customer.dl_expiration)}, so the rental can't go past that.`);
+              }
+              const expiring = b.drivers.find((d) => d.dl_expiration <= a.returnDate);
+              if (expiring) return fail(`${expiring.full_name}'s license expires ${prettyDay(expiring.dl_expiration)}, so the rental can't go past that.`);
+
+              // Only the added days need to be free. Blocked dates are the owner's own holds, so they only get a mention.
+              const from = addDays(bk.return_date, 1);
+              const clash = await db()
+                .prepare(
+                  "SELECT b.id, b.pickup_date, c.full_name FROM bookings b JOIN customers c ON c.id = b.customer_id WHERE b.vehicle_id = ?1 AND b.id != ?2 AND b.status IN ('requested','approved') AND b.return_date >= ?3 AND b.pickup_date <= ?4 ORDER BY b.pickup_date ASC LIMIT 1",
+                )
+                .bind(bk.vehicle_id, bk.id, from, a.returnDate)
+                .first<{ id: string; pickup_date: string; full_name: string }>();
+              if (clash) {
+                const latest = addDays(clash.pickup_date, -1);
+                return fail(
+                  latest > bk.return_date
+                    ? `${clash.full_name} has this car from ${prettyDay(clash.pickup_date)} (reservation ${clash.id}). The latest you can extend to is ${prettyDay(latest)}.`
+                    : `${clash.full_name} has this car from ${prettyDay(clash.pickup_date)} (reservation ${clash.id}), so this rental can't be extended.`,
+                );
+              }
+              const blocks = (
+                await db()
+                  .prepare("SELECT start_date, end_date FROM blackouts WHERE vehicle_id = ?1 AND end_date >= ?2 AND start_date <= ?3 ORDER BY start_date")
+                  .bind(bk.vehicle_id, from, a.returnDate)
+                  .all<{ start_date: string; end_date: string }>()
+              ).results;
+
+              await db()
+                .prepare(
+                  "UPDATE bookings SET original_return_date = COALESCE(original_return_date, return_date), original_return_time = COALESCE(original_return_time, return_time), return_date = ?1, return_time = ?2, extended_at = ?3, extension_cents = COALESCE(extension_cents, 0) + ?4 WHERE id = ?5",
+                )
+                .bind(a.returnDate, a.returnTime, now, a.chargeCents, a.id)
+                .run();
+
+              const car = `${b.vehicle.year} ${b.vehicle.make} ${b.vehicle.model}`;
+              const reservationUrl = customerUrl(origin, b);
+              const notes: string[] = [];
+              let payUrl: string | null = null;
+              if (a.chargeCents > 0 && squareConfigured()) {
+                try {
+                  const link = await createPaymentLink({
+                    bookingId: a.id,
+                    amountCents: a.chargeCents,
+                    name: `${car} rental extension to ${a.returnDate} (${a.id})`,
+                    buyerEmail: b.customer.email,
+                    redirectUrl: reservationUrl,
+                  });
+                  payUrl = link.url;
+                  await db()
+                    .prepare("UPDATE bookings SET extension_link = ?1, extension_order_id = ?2, extension_paid_at = NULL WHERE id = ?3")
+                    .bind(link.url, link.orderId, a.id)
+                    .run();
+                  notes.push(`A Square link for ${fmtMoney(a.chargeCents)} went in the email.`);
+                } catch (err) {
+                  notes.push(`Square could not make a payment link (${err instanceof Error ? err.message : "unknown error"}), so collect the ${fmtMoney(a.chargeCents)} in your Square app.`);
+                }
+              } else if (a.chargeCents > 0) {
+                notes.push(`Square isn't connected here, so collect the ${fmtMoney(a.chargeCents)} in your Square app.`);
+              }
+              if (blocks.length > 0) {
+                const list = blocks.map((x) => (x.start_date === x.end_date ? shortDay(x.start_date) : `${shortDay(x.start_date)} to ${shortDay(x.end_date)}`)).join(", ");
+                notes.push(`You also have blocked dates on this car (${list}). If they were only to hold it for this renter, remove them in Blocked dates.`);
+              }
+
+              await refreshPdfs(a.id);
+              const payHtml =
+                a.chargeCents === 0
+                  ? "<p>No extra charge.</p>"
+                  : payUrl
+                    ? `<p>The extra days cost <strong>${fmtMoney(a.chargeCents)}</strong>.</p><p><a href="${payUrl}" style="display:inline-block;background:${BRAND.cobalt};color:white;padding:12px 18px;text-decoration:none;font-weight:600">Pay ${fmtMoney(a.chargeCents)} with Square</a></p>`
+                    : `<p>The extra days cost <strong>${fmtMoney(a.chargeCents)}</strong>. We will send you how to pay.</p>`;
+              await sendEmail({
+                bookingId: a.id,
+                to: [b.customer.email],
+                subject: `Your rental is extended to ${prettyDay(a.returnDate)}`,
+                html: emailShell(
+                  "Your rental is extended",
+                  `<p>Your ${car} is now due back <strong>${prettyDay(a.returnDate)} at ${fmtTime12(a.returnTime)}</strong>. It was due ${prettyDay(bk.return_date)} at ${fmtTime12(bk.return_time)}.</p>${payHtml}<p>Everything else in your rental agreement stays the same. <a href="${reservationUrl}">Open your reservation</a></p><p>Questions? Reply to this email.</p>`,
+                ),
+              });
+              return json({ ok: true, emailed: emailConfigured(), note: notes.join(" ") || undefined });
             }
             case "markPaid": {
               await db().prepare("UPDATE bookings SET payment_status = 'paid', paid_at = COALESCE(paid_at, ?1) WHERE id = ?2").bind(now, a.id).run();

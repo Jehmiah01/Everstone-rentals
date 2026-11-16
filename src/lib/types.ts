@@ -85,6 +85,8 @@ export type AdminBooking = {
   fuelIn: string | null; actualReturnAt: string | null; damageCents: number | null; feesCents: number | null;
   depositRefundedCents: number | null; depositDeductedCents: number | null; finalPaidCents: number | null; notes: string | null;
   refundedCents: number | null; refundedAt: string | null;
+  originalReturnDate: string | null; originalReturnTime: string | null; extendedAt: string | null;
+  extensionCents: number; extensionLink: string | null; extensionPaidAt: string | null;
   vehicleId: string; vehicleName: string;
   customer: {
     name: string; email: string; phone: string; address: string; dob: string; dlNumber: string; dlState: string;

@@ -43,6 +43,8 @@ export type AgreementContext = {
   };
   booking: {
     pickupDate: string; pickupTime: string; returnDate: string; returnTime: string; days: number;
+    /** Owner-approved extension, e.g. "Return moved to ...". Empty when not extended. */
+    extension: string;
     breakdown: string; totalCents: number; additionalDrivers: string;
     /** Listed additional drivers with license details (empty on reservations made before drivers had their own records). */
     drivers: AgreementDriver[];
@@ -216,6 +218,7 @@ export function buildRentalAgreement(ctx: AgreementContext): AgreementDoc {
           { label: "Driver License #", value: c.dlNumber },
           { label: "Issuing State", value: c.dlState },
           { label: "Rental Period", value: rentalPeriodLine(b) },
+          ...(b.extension ? [{ label: "Approved Extension", value: b.extension }] : []),
           ...(b.drivers.length > 0 ? [{ label: "Additional Authorized Driver(s)", value: driversLine(b) }] : []),
         ] }],
       },
@@ -272,6 +275,7 @@ export function buildEasySignAgreement(ctx: AgreementContext): AgreementDoc {
         blocks: [{ kind: "fields", fields: [
           { label: "Pickup Date/Time", value: `${prettyDay(b.pickupDate)} at ${fmtTime12(b.pickupTime)}` },
           { label: "Return Date/Time", value: `${prettyDay(b.returnDate)} at ${fmtTime12(b.returnTime)}` },
+          ...(b.extension ? [{ label: "Approved Extension", value: b.extension }] : []),
           { label: "Rental Rate", value: `${b.breakdown}; total ${fmtMoney(b.totalCents)}` },
           { label: "Security Deposit", value: fmtMoney(v.depositCents) },
           { label: "Excess / Damage Liability (if applicable)", value: "Not applicable" },

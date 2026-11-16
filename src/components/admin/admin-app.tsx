@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { fmtMoney, fmtTime12, formatEt, prettyDay, shortDay } from "@/lib/dates";
+import { addDays, diffDays, fmtMoney, fmtTime12, formatEt, isValidDay, prettyDay, priceVehicle, shortDay } from "@/lib/dates";
 import { ESIGN_CONSENT } from "@/lib/agreements";
 import { TERM_FIELDS, buildTeamAgreement, emptyTerms, missingTerm, type TeamTerms } from "@/lib/team-agreement";
 import type { AdminBooking, AdminData, AdminDriver, AdminMe, AdminStaff, AdminVehicle, MyAgreement } from "@/lib/types";
@@ -27,7 +27,7 @@ function generatePassword(): string {
 }
 type Run = (body: Record<string, unknown>, success?: string) => Promise<boolean>;
 
-async function post<T = { ok: boolean; emailed?: boolean; error?: string }>(body: unknown): Promise<T> {
+async function post<T = { ok: boolean; emailed?: boolean; error?: string; note?: string }>(body: unknown): Promise<T> {
   const res = await fetch("/api/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
   if (!res.ok || !json.ok) throw new Error(json.error ?? `Request failed (${res.status})`);
@@ -203,7 +203,7 @@ export function AdminApp() {
     try {
       const r = await post(body);
       const emailNote = r.emailed === false ? " Email is not set up yet, so nothing was emailed." : "";
-      setNotice({ kind: "ok", text: `${success ?? "Saved."}${emailNote}` });
+      setNotice({ kind: "ok", text: `${success ?? "Saved."}${r.note ? ` ${r.note}` : ""}${emailNote}` });
       await load();
       return true;
     } catch (e) {
@@ -807,14 +807,68 @@ function Reservations({ data, run, busy }: { data: AdminData; run: Run; busy: bo
                   {payBadge(b)}
                   {idBadge(b)}
                   {driversBadge(b)}
+                  {b.originalReturnDate ? <Badge tone="info">Extended</Badge> : null}
                 </span>
                 <span>{statusBadge(b)}</span>
               </button>
-              {open === b.id ? <BookingDetail b={b} run={run} busy={busy} /> : null}
+              {open === b.id ? <BookingDetail b={b} vehicle={data.vehicles.find((v) => v.id === b.vehicleId)} run={run} busy={busy} /> : null}
             </li>
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+const EXTEND_STEPS: [number, string][] = [[1, "+1 day"], [3, "+3 days"], [7, "+1 week"], [14, "+2 weeks"]];
+
+/** Push the return date back: checks the car is free, emails the renter, and sends a Square link for any extra charge. */
+function ExtendBox({ b, vehicle, run, busy }: { b: AdminBooking; vehicle?: AdminVehicle; run: Run; busy: boolean }) {
+  const [date, setDate] = useState(addDays(b.returnDate, 7));
+  const [time, setTime] = useState(b.returnTime);
+  const [charge, setCharge] = useState<string | null>(null);
+  const extra = isValidDay(date) ? diffDays(b.returnDate, date) : 0;
+  const suggested = vehicle && extra > 0 ? priceVehicle(extra, vehicle).total_cents : 0;
+  const shown = charge ?? dollars(suggested);
+  const chargeCents = toCents(shown === "" ? "0" : shown);
+  const ok = extra > 0 && chargeCents !== null && /^\d{2}:\d{2}$/.test(time);
+  return (
+    <div className="space-y-3 border border-line bg-surface p-4 md:col-span-2">
+      <div>
+        <h4 className="font-medium">Extend the rental</h4>
+        <p className="mt-1 text-sm text-subtle">Due back {prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)} now.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {EXTEND_STEPS.map(([n, label]) => (
+          <SmallButton key={n} tone={date === addDays(b.returnDate, n) ? "ink" : "ghost"} onClick={() => { setDate(addDays(b.returnDate, n)); setCharge(null); }}>{label}</SmallButton>
+        ))}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field id={`ext-date-${b.id}`} label="New return day">
+          <input id={`ext-date-${b.id}`} type="date" min={addDays(b.returnDate, 1)} value={date} onChange={(e) => { setDate(e.target.value); setCharge(null); }} className={inputClass} />
+        </Field>
+        <Field id={`ext-time-${b.id}`} label="Return time">
+          <input id={`ext-time-${b.id}`} type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputClass} />
+        </Field>
+        <Field id={`ext-charge-${b.id}`} label="Extra charge ($)">
+          <input id={`ext-charge-${b.id}`} inputMode="decimal" value={shown} onChange={(e) => setCharge(e.target.value)} className={inputClass} />
+        </Field>
+      </div>
+      <p className="text-sm text-subtle">
+        {extra > 0 ? `Adds ${extra} day${extra === 1 ? "" : "s"}. ` : "Pick a day after the current return day. "}
+        {suggested > 0 ? `Your price for ${extra} day${extra === 1 ? "" : "s"} on this car is ${fmtMoney(suggested)}. ` : ""}
+        Change the charge if you like, or put 0 for free. The renter gets an email with the new return day{chargeCents ? " and a Square link to pay" : ""}.
+      </p>
+      <SmallButton
+        tone="cobalt"
+        disabled={busy || !ok}
+        onClick={() => run(
+          { action: "extend", id: b.id, returnDate: date, returnTime: time, chargeCents: chargeCents ?? 0 },
+          `Extended. Now due back ${prettyDay(date)} at ${fmtTime12(time)}, and the renter was emailed.`,
+        )}
+      >
+        {extra > 0 ? `Extend to ${shortDay(date)}${chargeCents ? ` for ${fmtMoney(chargeCents)}` : " for free"}` : "Extend"}
+      </SmallButton>
     </div>
   );
 }
@@ -828,7 +882,7 @@ function Row({ k, children }: { k: string; children: ReactNode }) {
   );
 }
 
-function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: boolean }) {
+function BookingDetail({ b, vehicle, run, busy }: { b: AdminBooking; vehicle?: AdminVehicle; run: Run; busy: boolean }) {
   const me = useContext(MeContext);
   const [repName, setRepName] = useState(b.repName ?? (me.role === "owner" ? "Jehmiah Johnson" : me.name));
   const [reason, setReason] = useState("");
@@ -860,7 +914,20 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
           <Row k="License">{b.customer.dlNumber} ({b.customer.dlState}), expires {prettyDay(b.customer.dlExpiration)}</Row>
           <Row k="Other drivers">{b.drivers.length > 0 ? b.drivers.map((d) => d.fullName).join(", ") : b.additionalDrivers || "None"}</Row>
           <Row k="Pickup">{prettyDay(b.pickupDate)} at {fmtTime12(b.pickupTime)}</Row>
-          <Row k="Return">{prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}</Row>
+          <Row k="Return">
+            {prettyDay(b.returnDate)} at {fmtTime12(b.returnTime)}
+            {b.originalReturnDate ? <span className="block text-subtle">Extended. Signed for {prettyDay(b.originalReturnDate)} at {fmtTime12(b.originalReturnTime ?? b.returnTime)}.</span> : null}
+          </Row>
+          {b.originalReturnDate ? (
+            <Row k="Extension charge">
+              {b.extensionCents > 0 ? fmtMoney(b.extensionCents) : "None"}
+              {b.extensionCents > 0 ? (
+                <span className="block text-subtle">
+                  {b.extensionPaidAt ? `Paid ${when(b.extensionPaidAt)}` : b.extensionLink ? <>Square link sent, not paid yet. <a className="underline underline-offset-4" href={b.extensionLink} target="_blank" rel="noreferrer">Open link</a></> : "Collect it in your Square app."}
+                </span>
+              ) : null}
+            </Row>
+          ) : null}
           <Row k="Price">{b.days} days: {b.breakdown}. Total {fmtMoney(b.totalCents + b.depositCents)}</Row>
           <Row k="Booked">{formatEt(b.createdAt.includes("T") ? b.createdAt : `${b.createdAt.replace(" ", "T")}Z`)}</Row>
         </dl>
@@ -992,6 +1059,7 @@ function BookingDetail({ b, run, busy }: { b: AdminBooking; run: Run; busy: bool
         <h3 className="font-semibold">Decision</h3>
         {open ? (
           <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <ExtendBox key={b.returnDate} b={b} vehicle={vehicle} run={run} busy={busy} />
             <div className="space-y-3 border border-line bg-surface p-4">
               <Field id={`rep-${b.id}`} label="Your name for the countersignature">
                 <input id={`rep-${b.id}`} value={repName} onChange={(e) => setRepName(e.target.value)} className={inputClass} />

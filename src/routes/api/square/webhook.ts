@@ -43,6 +43,12 @@ export const Route = createFileRoute("/api/square/webhook")({
                 console.error(err);
               }
             }
+          } else {
+            // A payment for a rental extension link sent from the dashboard.
+            await db()
+              .prepare("UPDATE bookings SET extension_paid_at = COALESCE(extension_paid_at, ?1) WHERE extension_order_id = ?2")
+              .bind(new Date().toISOString(), payment.order_id)
+              .run();
           }
         }
         return Response.json({ ok: true });

@@ -28,6 +28,14 @@ export function toPublicVehicle(v: Vehicle): PublicVehicle {
   };
 }
 
+/** "Return moved to ... Approved by Owner on ... Extension charge: $X." Empty when the rental was never extended. */
+export function extensionLine(booking: BookingBundle["booking"]): string {
+  if (!booking.original_return_date) return "";
+  const approved = booking.extended_at ? ` Approved by Owner on ${formatEt(booking.extended_at)}.` : "";
+  const charge = (booking.extension_cents ?? 0) > 0 ? ` Extension charge: ${fmtMoney(booking.extension_cents)}.` : " No extra charge.";
+  return `Return moved to ${prettyDay(booking.return_date)} at ${fmtTime12(booking.return_time)}.${approved}${charge}`;
+}
+
 export function agreementContext(b: BookingBundle): AgreementContext {
   const { booking, vehicle, customer } = b;
   const money = (c: number | null) => (c === null ? "" : fmtMoney(c));
@@ -46,7 +54,10 @@ export function agreementContext(b: BookingBundle): AgreementContext {
       dob: customer.dob, dlExpiration: customer.dl_expiration,
     },
     booking: {
-      pickupDate: booking.pickup_date, pickupTime: booking.pickup_time, returnDate: booking.return_date, returnTime: booking.return_time,
+      // The agreements keep the return the renter signed for; an extension is added as its own line.
+      pickupDate: booking.pickup_date, pickupTime: booking.pickup_time,
+      returnDate: booking.original_return_date ?? booking.return_date, returnTime: booking.original_return_time ?? booking.return_time,
+      extension: extensionLine(booking),
       days: booking.days, breakdown: booking.rate_breakdown, totalCents: booking.total_cents,
       additionalDrivers: booking.additional_drivers ?? "",
       drivers: b.drivers.map((d) => ({

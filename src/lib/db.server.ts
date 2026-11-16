@@ -36,6 +36,10 @@ export type Booking = {
   refunded_cents: number | null; refund_id: string | null; refunded_at: string | null;
   /** Extra driver charge for this reservation, already included in total_cents. */
   driver_fee_cents: number;
+  /** Return the renter signed for, kept when the rental is extended (return_date then holds the new one). */
+  original_return_date: string | null; original_return_time: string | null; extended_at: string | null;
+  /** Extra charged for extensions; not included in total_cents. */
+  extension_cents: number; extension_link: string | null; extension_order_id: string | null; extension_paid_at: string | null;
 };
 
 export type Agreement = {
